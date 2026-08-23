@@ -165,13 +165,3 @@ MIT © [Your Name/Organization]
 
 **Built with ❤️ for agile teams everywhere.**
 ```
-
----
-
-### What’s new in this version of the README
-
-- **Features** – added note about auto‑focus, Escape‑to‑cancel drag, zoom indicator, right‑click pan, and context menu guard.
-- **Usage** – updated to reflect the improved drag behaviour and the new shortcut hints.
-- **Architecture** – mentioned `bringToFront` implementation and `NOTE_WIDTH` constant.
-
-Feel free to adjust the placeholder screenshot URL and any other details. Let me know if you need further tweaks!
