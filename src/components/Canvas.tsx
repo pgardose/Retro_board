@@ -202,9 +202,11 @@ interface CanvasProps {
  * Canvas — v4 (custom pan/zoom, zero library dependencies for navigation)
  *
  * Navigation model (Figma-parity):
- *   Space + Left-drag  → pan
- *   Mouse wheel        → zoom centered on cursor
- *   Double-click       → add note at cursor position
+ *   Space + Left-drag         → pan
+ *   Middle-Mouse-Button drag  → pan
+ *   Ctrl/Meta + Wheel         → zoom centered on cursor (also captures trackpad pinch)
+ *   Wheel (no modifier)       → pan canvas (trackpad two-finger scroll)
+ *   Double-click              → add note at cursor position
  *
  * Architecture:
  *   - `viewportRef`  — the fixed-size outer div that fills the screen. All
@@ -310,12 +312,19 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handleViewportPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      // Only pan when spacebar is held and it's a primary button press.
-      if (!spacePressed.current || e.button !== 0) return;
-      // Don't start a pan if the pointer landed on a sticky note —
-      // the note's own drag handler will take ownership.
+      // Two ways to start a canvas pan:
+      //   1. Space + Left-click (button 0) — Figma primary shortcut
+      //   2. Middle-Mouse-Button click (button 1) — Figma secondary shortcut
+      const isSpacePan = spacePressed.current && e.button === 0;
+      const isMMBPan = e.button === 1;
+
+      if (!isSpacePan && !isMMBPan) return;
+
+      // Don't steal a click that landed on a sticky note.
       if ((e.target as HTMLElement).closest("[data-note-root]")) return;
 
+      // Prevent the browser's default MMB auto-scroll mode (the crosshair
+      // panning widget that appears on middle-click in most browsers).
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
 
@@ -361,42 +370,95 @@ export const Canvas: React.FC<CanvasProps> = ({
     []
   );
 
-  // ── Wheel zoom centered on cursor ─────────────────────────────────────────
-  // Standard Figma formula:
-  //   newTranslate = cursorScreen - (cursorScreen - oldTranslate) * (newScale / oldScale)
-  // This keeps the point under the cursor stationary as scale changes.
+  // ── Wheel: zoom or pan depending on modifier keys ─────────────────────────
+  //
+  // BRANCH A — Zoom  (ctrlKey || metaKey is true)
+  //   Triggered by:
+  //     • Ctrl + mouse wheel  (Windows / Linux)
+  //     • Cmd  + mouse wheel  (macOS)
+  //     • Trackpad pinch-to-zoom (browser synthesises ctrlKey=true for pinch)
+  //   Formula: Figma's cursor-anchored zoom —
+  //     newTranslate = cursorScreen - (cursorScreen - oldTranslate) × (newScale / oldScale)
+  //   e.preventDefault() is essential here to suppress the browser's own
+  //   page-zoom on Ctrl+scroll.
+  //
+  // BRANCH B — Pan  (no modifier keys)
+  //   Triggered by:
+  //     • Trackpad two-finger scroll (deltaX + deltaY, DOM_DELTA_PIXEL mode)
+  //     • Mouse wheel vertical scroll (deltaY only, may be DOM_DELTA_LINE)
+  //   The OS-provided pixel deltas map directly to screen-space translation.
+  //   We do NOT divide by scale: a 50px finger movement should always move
+  //   the canvas 50px on screen, regardless of zoom level. Dividing by scale
+  //   would cause sluggish panning at high zoom and erratic panning at low
+  //   zoom — the opposite of natural scroll feel.
+  //   e.preventDefault() stops the browser from scrolling the page.
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
     const onWheel = (e: WheelEvent) => {
+      // Always prevent default: stops browser zoom (Ctrl+scroll) and page
+      // scroll (two-finger swipe) from interfering with canvas navigation.
       e.preventDefault();
 
       const t = transformRef.current;
 
-      // Normalise delta — trackpads send small values, mice send large ones.
-      // Using deltaMode === 1 (line mode) detection for Firefox compatibility.
-      const delta = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
-      const zoomFactor = 1 - delta * WHEEL_SENSITIVITY;
-      const newScale = Math.min(
-        MAX_SCALE,
-        Math.max(MIN_SCALE, t.scale * zoomFactor)
-      );
+      // ── BRANCH A: Zoom ──────────────────────────────────────────────────
+      if (e.ctrlKey || e.metaKey) {
+        // Normalize delta across input devices and browsers:
+        //   DOM_DELTA_LINE (deltaMode 1) — standard mouse wheel in Firefox;
+        //     each tick is one "line" (~20px equivalent). Multiply to get px.
+        //   DOM_DELTA_PIXEL (deltaMode 0) — trackpad pinch and Chrome wheel;
+        //     values are already in pixels, use directly.
+        //   DOM_DELTA_PAGE (deltaMode 2) — rare; treat same as line mode.
+        const rawDelta =
+          e.deltaMode === 0
+            ? e.deltaY                  // pixel mode — trackpad pinch, Chrome
+            : e.deltaY * 20;            // line/page mode — Firefox mouse wheel
 
-      if (newScale === t.scale) return;
+        const zoomFactor = 1 - rawDelta * WHEEL_SENSITIVITY;
+        const newScale = Math.min(
+          MAX_SCALE,
+          Math.max(MIN_SCALE, t.scale * zoomFactor)
+        );
 
-      // Pointer position in screen space (relative to viewport top-left).
-      const viewportRect = viewport.getBoundingClientRect();
-      const px = e.clientX - viewportRect.left;
-      const py = e.clientY - viewportRect.top;
+        if (newScale === t.scale) return;
 
-      const newX = px - (px - t.x) * (newScale / t.scale);
-      const newY = py - (py - t.y) * (newScale / t.scale);
+        // Pointer position relative to the viewport's top-left corner.
+        // getBoundingClientRect is cheap here (called on wheel, not rAF).
+        const viewportRect = viewport.getBoundingClientRect();
+        const px = e.clientX - viewportRect.left;
+        const py = e.clientY - viewportRect.top;
 
-      const next: Transform = { x: newX, y: newY, scale: newScale };
-      applyTransform(next);
-      // Only schedule a React re-render for scale (needed by StickyNote math).
-      setScale(newScale);
+        // Figma cursor-anchored zoom formula — keeps the canvas point that
+        // sits under the cursor perfectly stationary as scale changes.
+        const newX = px - (px - t.x) * (newScale / t.scale);
+        const newY = py - (py - t.y) * (newScale / t.scale);
+
+        applyTransform({ x: newX, y: newY, scale: newScale });
+        // Trigger a React re-render only for scale so StickyNote receives the
+        // updated value for its own pointer-capture drag math.
+        setScale(newScale);
+        return;
+      }
+
+      // ── BRANCH B: Pan ───────────────────────────────────────────────────
+      // deltaX drives horizontal pan (trackpad horizontal swipe).
+      // deltaY drives vertical pan   (trackpad vertical swipe / mouse wheel).
+      // Both arrive in DOM_DELTA_PIXEL for trackpads (mode 0).
+      // Mouse wheel without a modifier sends deltaY in DOM_DELTA_LINE (mode 1)
+      // for Firefox, so we normalise that to pixels too.
+      const dx = e.deltaMode === 0 ? e.deltaX : e.deltaX * 20;
+      const dy = e.deltaMode === 0 ? e.deltaY : e.deltaY * 20;
+
+      // Subtract because scrolling "down" (positive deltaY) should move the
+      // canvas upward (negative translateY), matching natural scroll direction.
+      applyTransform({
+        ...t,
+        x: t.x - dx,
+        y: t.y - dy,
+      });
+      // No setScale call — scale didn't change, no re-render needed.
     };
 
     viewport.addEventListener("wheel", onWheel, { passive: false });
@@ -556,7 +618,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 Double-click anywhere to add a note
               </p>
               <p className="text-slate-400 text-xs mt-1">
-                Drop into columns · Hold Space + drag to pan · Scroll to zoom
+                Drop into columns · Space/MMB + drag to pan · Two-finger scroll · Pinch or Ctrl+scroll to zoom
               </p>
             </div>
           </div>
