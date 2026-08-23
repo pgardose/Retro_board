@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { Users, Link2, Plus, Wifi, WifiOff } from "lucide-react";
+import { Users, Link2, Wifi, WifiOff } from "lucide-react";
 import { Canvas } from "./components/Canvas";
 import { useMultiplayerRoom } from "./hooks/useMultiplayerRoom";
 
@@ -13,6 +13,7 @@ const App: React.FC = () => {
     updateNote,
     deleteNote,
     upvoteNote,
+    bringToFront,
     boardSettings,
     toggleReveal,
     connected,
@@ -29,14 +30,6 @@ const App: React.FC = () => {
       setTimeout(() => setCopyLabel("Copy link"), 2000);
     });
   }, []);
-
-  const handleAddNoteButton = useCallback(() => {
-    addNote(1850 + Math.random() * 200, 1400 + Math.random() * 200);
-  }, [addNote]);
-
-  function bringToFront(id: string): void {
-    throw new Error("Function not implemented.");
-  }
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100 font-sans">
@@ -82,7 +75,7 @@ const App: React.FC = () => {
           <span className="text-xs text-slate-400">{peers.length} online</span>
         </div>
 
-        {/* Right: actions */}
+        {/* Right: actions — "Add note" lives in the floating dock; only Copy link here */}
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopyLink}
@@ -90,13 +83,6 @@ const App: React.FC = () => {
           >
             <Link2 size={13} />
             {copyLabel}
-          </button>
-          <button
-            onClick={handleAddNoteButton}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white font-semibold bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
-          >
-            <Plus size={13} />
-            Add note
           </button>
         </div>
       </header>
@@ -116,17 +102,18 @@ const App: React.FC = () => {
         onBringToFront={bringToFront}
         onToggleReveal={toggleReveal}
         roomId={roomId}
-        />
+      />
 
-      {/* ── Bottom status bar ────────────────────────────────────────────── */}
-            {/* ── Bottom status bar with Figma/Canva shortcuts ── */}
+      {/* ── Bottom status bar with shortcut hints ────────────────────────── */}
       <footer className="shrink-0 flex items-center justify-between px-4 py-2 bg-white border-t border-slate-200 text-xs text-slate-600 flex-wrap gap-2">
         {/* Left side: shortcuts */}
         <div className="flex items-center gap-3">
           <span className="font-medium text-slate-400">🖱️</span>
-          
+
           <span>
             <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">Space</kbd>
+            <span className="mx-1">or</span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">MMB</kbd>
             <span className="mx-1">+</span>
             <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">drag</kbd>
             <span className="mx-1.5 text-slate-400">·</span>
@@ -136,6 +123,15 @@ const App: React.FC = () => {
           <span className="w-px h-4 bg-slate-200" />
 
           <span>
+            Two-finger scroll
+            <span className="mx-1.5 text-slate-400">·</span>
+            <span>Pan</span>
+          </span>
+
+          <span className="w-px h-4 bg-slate-200" />
+
+          <span>
+            Pinch or{" "}
             <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">Ctrl</kbd>
             <span className="mx-1">+</span>
             <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">scroll</kbd>
@@ -146,9 +142,9 @@ const App: React.FC = () => {
           <span className="w-px h-4 bg-slate-200" />
 
           <span>
-            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">⏎</kbd>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">double-click</kbd>
             <span className="mx-1.5 text-slate-400">·</span>
-            <span>Double‑click to add</span>
+            <span>Add note</span>
           </span>
         </div>
 

@@ -1,6 +1,8 @@
 import React, { useRef, useState, useCallback, useEffect } from "react";
 import { X, GripVertical, ThumbsUp } from "lucide-react";
 import type { NoteData, NoteColor } from "../hooks/useMultiplayerRoom";
+// Fix #8: import the shared NOTE_WIDTH constant from Canvas
+import { NOTE_WIDTH } from "./Canvas";
 
 // ─── Color definitions ────────────────────────────────────────────────────────
 
@@ -79,12 +81,18 @@ interface StickyNoteProps {
    * Canvas uses this to recalculate the note's retro column category.
    */
   onDragEnd: (id: string, finalX: number) => void;
+  /**
+   * Fix #6: When true, the textarea is focused on first mount.
+   * Pass true only for the most recently created note so the user can
+   * immediately start typing without an extra click.
+   */
+  focusOnMount?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 /**
- * StickyNote — v4
+ * StickyNote — v5
  *
  * Interaction model:
  *
@@ -111,6 +119,9 @@ interface StickyNoteProps {
  * CANVAS PAN ISOLATION    → stopPropagation on pointerdown prevents the canvas
  *                           viewport's pan handler from firing when the user
  *                           clicks or drags a note.
+ *
+ * ESCAPE CANCEL           → Fix #9: pressing Escape during a drag restores the
+ *                           note to its position at drag-start and ends the drag.
  */
 export const StickyNote: React.FC<StickyNoteProps> = ({
   note,
@@ -123,6 +134,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
   onUpvote,
   onBringToFront,
   onDragEnd,
+  focusOnMount = false,
 }) => {
   const colors = COLOR_MAP[note.color];
 
@@ -143,6 +155,17 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
     }
   }, [note.text]);
 
+  // Fix #6: auto-focus the textarea on mount when this is the freshest note.
+  // Using a layout effect so the focus happens before the browser paints,
+  // preventing a frame where the note appears un-focused.
+  useEffect(() => {
+    if (focusOnMount && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+    // Only run on mount — focusOnMount is intentionally excluded from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Drag state ────────────────────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false);
   const isDraggingRef = useRef(false); // sync copy for event handlers
@@ -152,12 +175,15 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
    * the drag started, and the note's position at that same moment.
    * Each pointermove recomputes the delta from this anchor rather than from
    * the previous frame, which eliminates cumulative floating-point drift.
+   *
+   * Also stores the drag-start pointer id so we can release capture on Escape.
    */
   const dragAnchor = useRef<{
     pointerCanvasX: number;
     pointerCanvasY: number;
     noteStartX: number;
     noteStartY: number;
+    pointerId: number;
   } | null>(null);
 
   // Running X value updated each move so onDragEnd gets the final position.
@@ -188,39 +214,40 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
 
   // ── Root pointer-down: bring to front + start drag (if on handle) ─────────
 
-const handleRootPointerDown = useCallback(
-  (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
+  const handleRootPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.stopPropagation();
 
-    // Bring to front
-    onBringToFront(note.id);
+      // Bring to front
+      onBringToFront(note.id);
 
-    // Figure out what was clicked
-    const target = e.target as HTMLElement;
-    const isTextarea = target.closest('textarea') !== null;
-    const isColorDot = target.closest('button') !== null; // all buttons are color dots or delete
-    const isDelete = target.closest('[aria-label="Delete note"]') !== null;
+      // Figure out what was clicked
+      const target = e.target as HTMLElement;
+      const isTextarea = target.closest("textarea") !== null;
+      const isColorDot = target.closest("button") !== null; // all buttons are color dots or delete
+      const isDelete = target.closest('[aria-label="Delete note"]') !== null;
 
-    // If we clicked a button (color dot or delete) or the textarea, don't start a drag
-    if (isTextarea || isColorDot || isDelete) return;
+      // If we clicked a button (color dot or delete) or the textarea, don't start a drag
+      if (isTextarea || isColorDot || isDelete) return;
 
-    // ── Start drag ──────────────────────────────────────────────────────────
-    e.preventDefault();
-    rootRef.current?.setPointerCapture(e.pointerId);
+      // ── Start drag ──────────────────────────────────────────────────────────
+      e.preventDefault();
+      rootRef.current?.setPointerCapture(e.pointerId);
 
-    const canvasPos = toCanvasCoords(e.clientX, e.clientY);
-    dragAnchor.current = {
-      pointerCanvasX: canvasPos.x,
-      pointerCanvasY: canvasPos.y,
-      noteStartX: note.x,
-      noteStartY: note.y,
-    };
-    currentXRef.current = note.x;
-    isDraggingRef.current = true;
-    setIsDragging(true);
-  },
-  [note.id, note.x, note.y, onBringToFront, toCanvasCoords]
-);
+      const canvasPos = toCanvasCoords(e.clientX, e.clientY);
+      dragAnchor.current = {
+        pointerCanvasX: canvasPos.x,
+        pointerCanvasY: canvasPos.y,
+        noteStartX: note.x,
+        noteStartY: note.y,
+        pointerId: e.pointerId,
+      };
+      currentXRef.current = note.x;
+      isDraggingRef.current = true;
+      setIsDragging(true);
+    },
+    [note.id, note.x, note.y, onBringToFront, toCanvasCoords]
+  );
 
   // ── Pointer-move: translate note in canvas space ──────────────────────────
 
@@ -264,6 +291,31 @@ const handleRootPointerDown = useCallback(
     },
     [note.id, onDragEnd]
   );
+
+  // Fix #9: Escape key cancels the active drag — restores note to its
+  // position at drag-start, releases pointer capture, and resets drag state.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !isDraggingRef.current || !dragAnchor.current) return;
+
+      // Restore to start position
+      onUpdate(note.id, {
+        x: dragAnchor.current.noteStartX,
+        y: dragAnchor.current.noteStartY,
+      });
+
+      // Release pointer capture
+      rootRef.current?.releasePointerCapture(dragAnchor.current.pointerId);
+
+      // Reset drag state
+      dragAnchor.current = null;
+      isDraggingRef.current = false;
+      setIsDragging(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [note.id, onUpdate]);
 
   // ── Text handlers ─────────────────────────────────────────────────────────
 
@@ -309,7 +361,8 @@ const handleRootPointerDown = useCallback(
         position: "absolute",
         left: note.x,
         top: note.y,
-        width: 220,
+        // Fix #8: use NOTE_WIDTH constant instead of hardcoded 220
+        width: NOTE_WIDTH,
         zIndex: stackZIndex,
         // Only hint GPU compositing while actually moving to avoid promoting
         // every note to its own layer at all times.

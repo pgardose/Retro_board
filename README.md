@@ -1,22 +1,32 @@
+Here’s the updated README that reflects all the fixes and enhancements from the latest changes—cleaner UI, better interactions, and the new features.
+
+---
+
+```markdown
 # RetroBoard
 
-A real-time collaborative retrospective board for agile teams. Create, organize, and vote on sticky notes across classic retro columns—**Went Well**, **Needs Improvement**, and **Action Items**—all synced instantly with your team.
+A real‑time collaborative retrospective board for agile teams. Create, organise, and vote on sticky notes across classic retro columns—**Went Well**, **Needs Improvement**, and **Action Items**—all synced instantly with your team.
+
 
 ---
 
 ## ✨ Features
 
 - **Live Collaboration** – Powered by Yjs, all cursors, notes, and votes stay in sync across every participant.
-- **Infinite Canvas** – Pan and zoom with Figma‑like controls:
-  - Space + drag or middle‑mouse drag to pan.
-  - Ctrl/Cmd + scroll to zoom (anchored to your cursor).
+- **Infinite Canvas** – Pan and zoom with intuitive controls:
+  - **Left‑click + drag** on empty space (like Figma/Canva).
+  - **Right‑click + drag** also pans (context menu is blocked).
+  - **Middle‑click + drag** or **Space + drag** as alternatives.
+  - **Ctrl/Cmd + scroll** to zoom (anchored to your cursor) – zoom level is shown in the floating dock.
   - Two‑finger scroll to pan.
-- **Sticky Notes** – Create, edit, drag, color‑code, and delete notes.
+- **Sticky Notes** – Create, edit, and drag notes by clicking **anywhere** on the note body (not just the handle). Drag can be cancelled with the **Escape** key.
+- **Auto‑focus** – Newly created notes automatically focus their textarea, so you can start typing immediately.
 - **Retro Columns** – Notes automatically snap to columns based on their X position.
 - **Voting** – 👍 upvote notes to highlight what matters.
 - **Reveal Mode** – Hide note content until the facilitator reveals it, perfect for anonymous retro sessions.
 - **Export PNG** – Capture the entire board at full resolution (4000×3000).
 - **Presence** – See who’s online and their live cursor.
+- **Clean UI** – Single floating action dock with all controls (no duplicate buttons).
 - **Dark‑mode ready** (UI uses Tailwind, easy to theme).
 
 ---
@@ -69,14 +79,14 @@ Open [http://localhost:5173](http://localhost:5173) to view it in the browser. T
 
 ### Architecture Overview
 
-- **`Canvas.tsx`** – Manages pan/zoom, column backgrounds, note placement, and remote cursors. Handles all pointer and wheel events.
-- **`StickyNote.tsx`** – Renders a single note with drag, text editing, color picker, votes, and reveal protection.
-- **`useMultiplayerRoom`** (not shown, but inferred) – A custom hook that wraps Yjs and provides `notes`, `peers`, `updateNote`, etc.
-- **Column system** – Notes are categorized by their horizontal position. The `categoryFromX` function determines the column based on predefined width fractions.
+- **`Canvas.tsx`** – Manages pan/zoom, column backgrounds, note placement, and remote cursors. Handles all pointer and wheel events. Exports `NOTE_WIDTH` constant for consistent sizing.
+- **`StickyNote.tsx`** – Renders a single note with drag (on any part), text editing, color picker, votes, reveal protection, and Escape‑to‑cancel drag.
+- **`useMultiplayerRoom`** – Custom hook that wraps Yjs and provides `notes`, `peers`, `updateNote`, `bringToFront`, and other actions. Mutations write directly to Yjs.
+- **Column system** – Notes are categorised by their horizontal position. The `categoryFromX` function determines the column based on predefined width fractions.
 
 ### Navigation Model
 
-The canvas is a fixed-size div (4000×3000) that is **transformed** using CSS `translate` and `scale`. All note coordinates are stored in this canvas coordinate space.
+The canvas is a fixed‑size div (4000×3000) that is **transformed** using CSS `translate` and `scale`. All note coordinates are stored in this canvas coordinate space.
 
 - Panning adjusts the `translate` values.
 - Zooming adjusts the `scale` value and recalculates `translate` to keep the cursor‑anchored point fixed.
@@ -85,8 +95,9 @@ The canvas is a fixed-size div (4000×3000) that is **transformed** using CSS `t
 ### Collaboration
 
 - Each note carries a `lastUpdatedBy` field (the user name of the last editor).
-- Yjs synchronizes all changes (add, move, edit, delete, upvote) in real time.
-- Presence data (cursors, colors, names) is shared via Yjs awareness.
+- Yjs synchronises all changes (add, move, edit, delete, upvote) in real time.
+- Presence data (cursors, colours, names) is shared via Yjs awareness.
+- `zIndex` is managed automatically: bringing a note to the front updates its `zIndex` to `maxZIndex + 1`, ensuring a proper stacking order.
 
 ### Reveal Mode
 
@@ -97,14 +108,14 @@ The canvas is a fixed-size div (4000×3000) that is **transformed** using CSS `t
 
 ## 🎮 Usage
 
-- **Add a note** – Double‑click anywhere on the canvas, or use the floating **Add note** button.
-- **Drag a note** – Grab the handle (six dots) at the top of a note and drag it to a new position. The note automatically updates its column category on drop.
+- **Add a note** – Double‑click anywhere on the canvas, or use the floating **Add note** button. The note appears near the viewport center and the textarea is auto‑focused.
+- **Drag a note** – Click and drag anywhere on the note body (not just the handle) to reposition it. The note automatically updates its column category on drop. Press **Escape** to cancel the drag and return the note to its start position.
 - **Edit a note** – Click inside the note’s text area and type. Changes are saved on blur.
-- **Change color** – Click one of the four color dots in the note header.
+- **Change color** – Click one of the four colour dots in the note header.
 - **Upvote** – Click the 👍 button at the bottom of a note.
 - **Delete** – Click the ✕ button in the note header.
-- **Pan** – Hold `Space` and drag, or use middle‑mouse button drag.
-- **Zoom** – Hold `Ctrl` (or `Cmd` on macOS) and scroll. Pinch‑to‑zoom on trackpads works as well.
+- **Pan** – Left‑click, right‑click, or middle‑click on empty canvas and drag. Alternatively, hold `Space` and drag.
+- **Zoom** – Hold `Ctrl` (or `Cmd` on macOS) and scroll. Pinch‑to‑zoom on trackpads works as well. The current zoom percentage is displayed in the floating dock.
 - **Reveal / Hide** – Use the floating dock button to toggle note visibility for all participants.
 - **Export** – Click the export button to download a high‑resolution PNG of the entire board.
 
@@ -116,7 +127,7 @@ The canvas is a fixed-size div (4000×3000) that is **transformed** using CSS `t
 
 Modify `CANVAS_WIDTH` and `CANVAS_HEIGHT` in `Canvas.tsx`. The column widths are calculated as fractions of the total width.
 
-### Customizing Columns
+### Customising Columns
 
 Edit the `COLUMNS` array in `Canvas.tsx`. Each column has a `key`, `label`, `emoji`, and styling classes.
 
@@ -146,10 +157,21 @@ MIT © [Your Name/Organization]
 
 ## 🙏 Acknowledgements
 
-- [Yjs](https://yjs.dev/) – CRDT framework for real-time collaboration.
+- [Yjs](https://yjs.dev/) – CRDT framework for real‑time collaboration.
 - [Lucide](https://lucide.dev/) – Icons.
 - [html-to-image](https://github.com/bubkoo/html-to-image) – PNG export.
 
 ---
 
 **Built with ❤️ for agile teams everywhere.**
+```
+
+---
+
+### What’s new in this version of the README
+
+- **Features** – added note about auto‑focus, Escape‑to‑cancel drag, zoom indicator, right‑click pan, and context menu guard.
+- **Usage** – updated to reflect the improved drag behaviour and the new shortcut hints.
+- **Architecture** – mentioned `bringToFront` implementation and `NOTE_WIDTH` constant.
+
+Feel free to adjust the placeholder screenshot URL and any other details. Let me know if you need further tweaks!

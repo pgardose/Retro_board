@@ -49,7 +49,7 @@ export interface MultiplayerRoom {
   /** Call this on every pointermove over the canvas to broadcast cursor position. */
   updateCursor: (x: number, y: number) => void;
   /** Adds a brand-new note at the given coordinates. */
-  addNote: (x: number, y: number) => void;
+  addNote: (x: number, y: number) => string;
   /** Merges a partial update into an existing note (text, position, color, category…). */
   updateNote: (id: string, patch: Partial<Omit<NoteData, "id">>) => void;
   /** Removes a note by id. */
@@ -128,6 +128,10 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = { isRevealed: false };
  *    unambiguous which note is "on top" even under concurrent edits.
  *  - `addNote` seeds new notes with `maxZ + 1` too, so freshly created notes
  *    never spawn underneath existing ones.
+ *
+ * New in v4:
+ *  - `addNote` now returns the new note's `id` string so callers can track
+ *    which note was most recently created (e.g. to auto-focus its textarea).
  *
  * Infinite-loop prevention:
  *  Observers only call `setState`. Actions (addNote, updateNote, upvoteNote,
@@ -275,10 +279,14 @@ export function useMultiplayerRoom(): MultiplayerRoom {
     return max;
   }, []);
 
-  /** Create a new note at the given canvas coordinates. */
-  const addNote = useCallback((x: number, y: number) => {
-    if (!notesMapRef.current) return;
+  /**
+   * Create a new note at the given canvas coordinates.
+   * Returns the new note's id so callers can track the latest created note
+   * (e.g. to auto-focus its textarea via `focusOnMount`).
+   */
+  const addNote = useCallback((x: number, y: number): string => {
     const id = crypto.randomUUID();
+    if (!notesMapRef.current) return id;
     const note: NoteData = {
       id,
       text: "",
@@ -295,6 +303,7 @@ export function useMultiplayerRoom(): MultiplayerRoom {
     notesMapRef.current.doc?.transact(() => {
       notesMapRef.current!.set(id, note);
     });
+    return id;
   }, [getMaxZIndex, localUser.name]);
 
   /** Apply a partial update to an existing note (position, text, color, category…). */

@@ -15,6 +15,10 @@ import type {
   BoardSettings,
 } from "../hooks/useMultiplayerRoom";
 
+// ─── Shared note width constant ───────────────────────────────────────────────
+// Fix #8: single source of truth used by Canvas layout math and StickyNote width.
+export const NOTE_WIDTH = 220;
+
 // ─── Column definitions ───────────────────────────────────────────────────────
 
 interface ColumnDef {
@@ -187,7 +191,8 @@ interface CanvasProps {
   localUserName: string;
   boardSettings: BoardSettings;
   onUpdateCursor: (x: number, y: number) => void;
-  onAddNote: (x: number, y: number) => void;
+  // Fix #6: addNote now returns the new note's id
+  onAddNote: (x: number, y: number) => string;
   onUpdateNote: (id: string, patch: Partial<Omit<NoteData, "id">>) => void;
   onDeleteNote: (id: string) => void;
   onUpvoteNote: (id: string) => void;
@@ -199,7 +204,7 @@ interface CanvasProps {
 // ─── Canvas ───────────────────────────────────────────────────────────────────
 
 /**
- * Canvas — v4 (custom pan/zoom, zero library dependencies for navigation)
+ * Canvas — v5 (custom pan/zoom, zero library dependencies for navigation)
  *
  * Navigation model (Figma-parity):
  *   Space + Left-drag         → pan
@@ -256,8 +261,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   // ── Set initial position on mount ─────────────────────────────────────────
   // Centers the board horizontally in the viewport at scale 1, with a small
-  // top margin so the column headers are immediately visible. Never uses
-  // `centerOnInit` or `fitToScreen` — those cause the micro-scale bug.
+  // top margin so the column headers are immediately visible.
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -300,7 +304,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     };
   }, []);
 
-  // ── Pan via Space+drag ────────────────────────────────────────────────────
+  // ── Pan via Space+drag or MMB drag ────────────────────────────────────────
   // Anchor stores the pointer position at drag-start and the transform at
   // that moment; each move recomputes the delta from the anchor.
   const panAnchor = useRef<{
@@ -310,31 +314,35 @@ export const Canvas: React.FC<CanvasProps> = ({
     ty: number;
   } | null>(null);
 
+  // Fix #4: track active panning state to drive grabbing cursor
+  const [isPanning, setIsPanning] = useState(false);
+
   const handleViewportPointerDown = useCallback(
-  (e: React.PointerEvent<HTMLDivElement>) => {
-    // Allow left (0), middle (1), and right (2) buttons
-    const LEFT = 0;
-    const MIDDLE = 1;
-    const RIGHT = 2;
-    if (e.button !== LEFT && e.button !== MIDDLE && e.button !== RIGHT) return;
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Allow left (0), middle (1), and right (2) buttons
+      const LEFT = 0;
+      const MIDDLE = 1;
+      const RIGHT = 2;
+      if (e.button !== LEFT && e.button !== MIDDLE && e.button !== RIGHT) return;
 
-    // Don't pan if the pointer is on a sticky note
-    if ((e.target as HTMLElement).closest("[data-note-root]")) return;
+      // Don't pan if the pointer is on a sticky note
+      if ((e.target as HTMLElement).closest("[data-note-root]")) return;
 
-    // For right‑click, we must prevent the context menu (done above, but also here)
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
+      // For right-click, we must prevent the context menu
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
 
-    const t = transformRef.current;
-    panAnchor.current = {
-      pointerX: e.clientX,
-      pointerY: e.clientY,
-      tx: t.x,
-      ty: t.y,
-    };
-  },
-  []
-);
+      const t = transformRef.current;
+      panAnchor.current = {
+        pointerX: e.clientX,
+        pointerY: e.clientY,
+        tx: t.x,
+        ty: t.y,
+      };
+      setIsPanning(true);
+    },
+    []
+  );
 
   const handleViewportPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -343,12 +351,6 @@ export const Canvas: React.FC<CanvasProps> = ({
       const canvasX = (e.clientX - t.x) / t.scale;
       const canvasY = (e.clientY - t.y) / t.scale;
       onUpdateCursor(canvasX, canvasY);
-
-      // Inside handleViewportPointerMove, when panAnchor.current is not null:
-    if (panAnchor.current) {
-    e.currentTarget.style.cursor = "grabbing";
-    // ... (rest of pan logic)
-}
 
       // ── Pan (only when anchor is set) ────────────────────────────────────
       if (!panAnchor.current) return;
@@ -361,16 +363,23 @@ export const Canvas: React.FC<CanvasProps> = ({
       });
     },
     [onUpdateCursor, applyTransform]
-    
   );
 
-  
   const handleViewportPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (panAnchor.current) {
         e.currentTarget.releasePointerCapture(e.pointerId);
         panAnchor.current = null;
+        setIsPanning(false);
       }
+    },
+    []
+  );
+
+  // Fix #5: prevent context menu on the viewport (covers right-click and MMB)
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
     },
     []
   );
@@ -393,9 +402,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   //     • Mouse wheel vertical scroll (deltaY only, may be DOM_DELTA_LINE)
   //   The OS-provided pixel deltas map directly to screen-space translation.
   //   We do NOT divide by scale: a 50px finger movement should always move
-  //   the canvas 50px on screen, regardless of zoom level. Dividing by scale
-  //   would cause sluggish panning at high zoom and erratic panning at low
-  //   zoom — the opposite of natural scroll feel.
+  //   the canvas 50px on screen, regardless of zoom level.
   //   e.preventDefault() stops the browser from scrolling the page.
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -410,12 +417,6 @@ export const Canvas: React.FC<CanvasProps> = ({
 
       // ── BRANCH A: Zoom ──────────────────────────────────────────────────
       if (e.ctrlKey || e.metaKey) {
-        // Normalize delta across input devices and browsers:
-        //   DOM_DELTA_LINE (deltaMode 1) — standard mouse wheel in Firefox;
-        //     each tick is one "line" (~20px equivalent). Multiply to get px.
-        //   DOM_DELTA_PIXEL (deltaMode 0) — trackpad pinch and Chrome wheel;
-        //     values are already in pixels, use directly.
-        //   DOM_DELTA_PAGE (deltaMode 2) — rare; treat same as line mode.
         const rawDelta =
           e.deltaMode === 0
             ? e.deltaY                  // pixel mode — trackpad pinch, Chrome
@@ -429,14 +430,11 @@ export const Canvas: React.FC<CanvasProps> = ({
 
         if (newScale === t.scale) return;
 
-        // Pointer position relative to the viewport's top-left corner.
-        // getBoundingClientRect is cheap here (called on wheel, not rAF).
         const viewportRect = viewport.getBoundingClientRect();
         const px = e.clientX - viewportRect.left;
         const py = e.clientY - viewportRect.top;
 
-        // Figma cursor-anchored zoom formula — keeps the canvas point that
-        // sits under the cursor perfectly stationary as scale changes.
+        // Figma cursor-anchored zoom formula
         const newX = px - (px - t.x) * (newScale / t.scale);
         const newY = py - (py - t.y) * (newScale / t.scale);
 
@@ -448,16 +446,9 @@ export const Canvas: React.FC<CanvasProps> = ({
       }
 
       // ── BRANCH B: Pan ───────────────────────────────────────────────────
-      // deltaX drives horizontal pan (trackpad horizontal swipe).
-      // deltaY drives vertical pan   (trackpad vertical swipe / mouse wheel).
-      // Both arrive in DOM_DELTA_PIXEL for trackpads (mode 0).
-      // Mouse wheel without a modifier sends deltaY in DOM_DELTA_LINE (mode 1)
-      // for Firefox, so we normalise that to pixels too.
       const dx = e.deltaMode === 0 ? e.deltaX : e.deltaX * 20;
       const dy = e.deltaMode === 0 ? e.deltaY : e.deltaY * 20;
 
-      // Subtract because scrolling "down" (positive deltaY) should move the
-      // canvas upward (negative translateY), matching natural scroll direction.
       applyTransform({
         ...t,
         x: t.x - dx,
@@ -470,15 +461,6 @@ export const Canvas: React.FC<CanvasProps> = ({
     return () => viewport.removeEventListener("wheel", onWheel);
   }, [applyTransform]);
 
-  // Add this new useEffect inside the Canvas component (around line 100, after other effects)
-
-useEffect(() => {
-  const viewport = viewportRef.current;
-  if (!viewport) return;
-  const onContextMenu = (e: Event) => e.preventDefault();
-  viewport.addEventListener('contextmenu', onContextMenu);
-  return () => viewport.removeEventListener('contextmenu', onContextMenu);
-}, []);
   // ── Note creation on double-click ─────────────────────────────────────────
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -487,10 +469,12 @@ useEffect(() => {
 
       const t = transformRef.current;
       // Convert screen coords to canvas coords, then offset so the note's
-      // center lands under the cursor (note is 220px wide × ~140px tall).
-      const canvasX = (e.clientX - t.x) / t.scale - 110;
+      // center lands under the cursor (note is NOTE_WIDTH px wide × ~140px tall).
+      // Fix #8: use NOTE_WIDTH constant instead of hardcoded 220 / 110
+      const canvasX = (e.clientX - t.x) / t.scale - NOTE_WIDTH / 2;
       const canvasY = (e.clientY - t.y) / t.scale - 60;
-      onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
+      const id = onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
+      setLatestNoteId(id);
     },
     [onAddNote]
   );
@@ -504,10 +488,15 @@ useEffect(() => {
     const vw = viewport.clientWidth;
     const vh = viewport.clientHeight;
     // Center of the current view in canvas space
-    const canvasX = (vw / 2 - t.x) / t.scale - 110;
+    // Fix #8: use NOTE_WIDTH constant instead of hardcoded 110 offset
+    const canvasX = (vw / 2 - t.x) / t.scale - NOTE_WIDTH / 2;
     const canvasY = (vh / 2 - t.y) / t.scale - 60;
-    onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
+    const id = onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
+    setLatestNoteId(id);
   }, [onAddNote]);
+
+  // Fix #6: track the most recently created note id so we can auto-focus it
+  const [latestNoteId, setLatestNoteId] = useState<string | null>(null);
 
   // ── Note drag-end: recalculate category from final X ─────────────────────
   const handleNoteDragEnd = useCallback(
@@ -552,6 +541,10 @@ useEffect(() => {
 
   const remotePeers = peers.filter((p) => p.clientId !== localClientId);
 
+  // Fix #4: derive cursor style — grabbing during any active pan, grab when
+  // spacebar is held (ready to pan), crosshair otherwise.
+  const cursorStyle = isPanning ? "grabbing" : spaceDown ? "grab" : "crosshair";
+
   return (
     <>
       {/* ── Viewport ───────────────────────────────────────────────────────
@@ -562,7 +555,8 @@ useEffect(() => {
         ref={viewportRef}
         className="relative flex-1 overflow-hidden"
         style={{
-          cursor: spaceDown ? "grab" : "crosshair",
+          // Fix #4: use unified cursor state covering Space, MMB, and all pans
+          cursor: cursorStyle,
           backgroundImage:
             "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
           backgroundSize: "32px 32px",
@@ -575,6 +569,8 @@ useEffect(() => {
         onPointerMove={handleViewportPointerMove}
         onPointerUp={handleViewportPointerUp}
         onDoubleClick={handleDoubleClick}
+        // Fix #5: block native context menu on all button types (right-click, MMB)
+        onContextMenu={handleContextMenu}
       >
         {/* ── Canvas (4000 × 3000) ─────────────────────────────────────────
              Positioned at (0,0) relative to the viewport; the CSS transform
@@ -611,6 +607,8 @@ useEffect(() => {
               onUpvote={onUpvoteNote}
               onBringToFront={onBringToFront}
               onDragEnd={handleNoteDragEnd}
+              // Fix #6: only the freshest note gets focusOnMount=true
+              focusOnMount={note.id === latestNoteId}
             />
           ))}
 
@@ -653,7 +651,13 @@ useEffect(() => {
         // Prevent double-click on the dock from creating a note
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        {/* Divider helper */}
+        {/* Fix #3: Zoom level indicator */}
+        <div className="flex items-center px-2">
+          <span className="text-xs font-mono text-slate-500 tabular-nums w-10 text-center select-none">
+            {Math.round(scale * 100)}%
+          </span>
+        </div>
+
         <div className="w-px h-5 bg-slate-200 mx-0.5" />
 
         {/* Add Note */}
