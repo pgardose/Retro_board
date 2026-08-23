@@ -311,33 +311,34 @@ export const Canvas: React.FC<CanvasProps> = ({
   } | null>(null);
 
   const handleViewportPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      // Two ways to start a canvas pan:
-      //   1. Space + Left-click (button 0) — Figma primary shortcut
-      //   2. Middle-Mouse-Button click (button 1) — Figma secondary shortcut
-      const isSpacePan = spacePressed.current && e.button === 0;
-      const isMMBPan = e.button === 1;
+  (e: React.PointerEvent<HTMLDivElement>) => {
+    const LEFT_BUTTON = 0;
+    const MIDDLE_BUTTON = 1;
 
-      if (!isSpacePan && !isMMBPan) return;
+    // Ignore right‑click (button 2) and other buttons
+    if (e.button !== LEFT_BUTTON && e.button !== MIDDLE_BUTTON) return;
 
-      // Don't steal a click that landed on a sticky note.
-      if ((e.target as HTMLElement).closest("[data-note-root]")) return;
+    // If the pointer is on a sticky note, let the note handle it
+    if ((e.target as HTMLElement).closest("[data-note-root]")) return;
 
-      // Prevent the browser's default MMB auto-scroll mode (the crosshair
-      // panning widget that appears on middle-click in most browsers).
-      e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
+    // Allow panning with:
+    //   - plain left‑click (new)
+    //   - Space + left‑click (existing)
+    //   - middle‑click (existing)
+    // We don't need separate flags – any left or middle click on empty canvas starts pan.
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
 
-      const t = transformRef.current;
-      panAnchor.current = {
-        pointerX: e.clientX,
-        pointerY: e.clientY,
-        tx: t.x,
-        ty: t.y,
-      };
-    },
-    []
-  );
+    const t = transformRef.current;
+    panAnchor.current = {
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      tx: t.x,
+      ty: t.y,
+    };
+  },
+  []
+);
 
   const handleViewportPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -346,6 +347,12 @@ export const Canvas: React.FC<CanvasProps> = ({
       const canvasX = (e.clientX - t.x) / t.scale;
       const canvasY = (e.clientY - t.y) / t.scale;
       onUpdateCursor(canvasX, canvasY);
+
+      // Inside handleViewportPointerMove, when panAnchor.current is not null:
+    if (panAnchor.current) {
+    e.currentTarget.style.cursor = "grabbing";
+    // ... (rest of pan logic)
+}
 
       // ── Pan (only when anchor is set) ────────────────────────────────────
       if (!panAnchor.current) return;
@@ -358,8 +365,10 @@ export const Canvas: React.FC<CanvasProps> = ({
       });
     },
     [onUpdateCursor, applyTransform]
+    
   );
 
+  
   const handleViewportPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (panAnchor.current) {

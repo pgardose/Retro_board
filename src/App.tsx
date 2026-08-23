@@ -119,12 +119,42 @@ const App: React.FC = () => {
         />
 
       {/* ── Bottom status bar ────────────────────────────────────────────── */}
-      <footer className="shrink-0 flex items-center justify-between px-4 py-1 bg-white border-t border-slate-100 text-[11px] text-slate-400">
-        <span>
-          Double-click to add · Drag into columns · 👍 upvote · 🔒 hide until reveal
-        </span>
-        <span>
-          Synced via{" "}
+            {/* ── Bottom status bar with Figma/Canva shortcuts ── */}
+      <footer className="shrink-0 flex items-center justify-between px-4 py-2 bg-white border-t border-slate-200 text-xs text-slate-600 flex-wrap gap-2">
+        {/* Left side: shortcuts */}
+        <div className="flex items-center gap-3">
+          <span className="font-medium text-slate-400">🖱️</span>
+          
+          <span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">Space</kbd>
+            <span className="mx-1">+</span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">drag</kbd>
+            <span className="mx-1.5 text-slate-400">·</span>
+            <span>Pan</span>
+          </span>
+
+          <span className="w-px h-4 bg-slate-200" />
+
+          <span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">Ctrl</kbd>
+            <span className="mx-1">+</span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">scroll</kbd>
+            <span className="mx-1.5 text-slate-400">·</span>
+            <span>Zoom</span>
+          </span>
+
+          <span className="w-px h-4 bg-slate-200" />
+
+          <span>
+            <kbd className="px-1.5 py-0.5 bg-slate-100 rounded border border-slate-300 text-[10px] font-mono">⏎</kbd>
+            <span className="mx-1.5 text-slate-400">·</span>
+            <span>Double‑click to add</span>
+          </span>
+        </div>
+
+        {/* Right side: sync info */}
+        <span className="text-slate-400 flex items-center gap-1">
+          <span>Synced via</span>
           <span className="font-mono text-slate-500">wss://demos.yjs.dev</span>
         </span>
       </footer>
