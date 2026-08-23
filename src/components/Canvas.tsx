@@ -312,20 +312,16 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handleViewportPointerDown = useCallback(
   (e: React.PointerEvent<HTMLDivElement>) => {
-    const LEFT_BUTTON = 0;
-    const MIDDLE_BUTTON = 1;
+    // Allow left (0), middle (1), and right (2) buttons
+    const LEFT = 0;
+    const MIDDLE = 1;
+    const RIGHT = 2;
+    if (e.button !== LEFT && e.button !== MIDDLE && e.button !== RIGHT) return;
 
-    // Ignore right‑click (button 2) and other buttons
-    if (e.button !== LEFT_BUTTON && e.button !== MIDDLE_BUTTON) return;
-
-    // If the pointer is on a sticky note, let the note handle it
+    // Don't pan if the pointer is on a sticky note
     if ((e.target as HTMLElement).closest("[data-note-root]")) return;
 
-    // Allow panning with:
-    //   - plain left‑click (new)
-    //   - Space + left‑click (existing)
-    //   - middle‑click (existing)
-    // We don't need separate flags – any left or middle click on empty canvas starts pan.
+    // For right‑click, we must prevent the context menu (done above, but also here)
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
 
@@ -474,6 +470,15 @@ export const Canvas: React.FC<CanvasProps> = ({
     return () => viewport.removeEventListener("wheel", onWheel);
   }, [applyTransform]);
 
+  // Add this new useEffect inside the Canvas component (around line 100, after other effects)
+
+useEffect(() => {
+  const viewport = viewportRef.current;
+  if (!viewport) return;
+  const onContextMenu = (e: Event) => e.preventDefault();
+  viewport.addEventListener('contextmenu', onContextMenu);
+  return () => viewport.removeEventListener('contextmenu', onContextMenu);
+}, []);
   // ── Note creation on double-click ─────────────────────────────────────────
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {

@@ -188,45 +188,39 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
 
   // ── Root pointer-down: bring to front + start drag (if on handle) ─────────
 
-  const handleRootPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      // Always stop propagation — prevents the canvas viewport's Space+drag
-      // pan handler from firing when the user clicks/drags a note.
-      e.stopPropagation();
+const handleRootPointerDown = useCallback(
+  (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
 
-      // Raise this note above its neighbors immediately.
-      onBringToFront(note.id);
+    // Bring to front
+    onBringToFront(note.id);
 
-      // Determine if the pointer landed on the drag handle (or a child of it).
-      const handle = rootRef.current?.querySelector("[data-drag-handle]");
-      const onHandle = handle?.contains(e.target as Node) ?? false;
+    // Figure out what was clicked
+    const target = e.target as HTMLElement;
+    const isTextarea = target.closest('textarea') !== null;
+    const isColorDot = target.closest('button') !== null; // all buttons are color dots or delete
+    const isDelete = target.closest('[aria-label="Delete note"]') !== null;
 
-      if (!onHandle) {
-        // Not a drag — just a click to select/focus. Let the event bubble
-        // naturally so the textarea receives focus if the user clicked it.
-        return;
-      }
+    // If we clicked a button (color dot or delete) or the textarea, don't start a drag
+    if (isTextarea || isColorDot || isDelete) return;
 
-      // ── Begin drag ────────────────────────────────────────────────────────
-      e.preventDefault();
+    // ── Start drag ──────────────────────────────────────────────────────────
+    e.preventDefault();
+    rootRef.current?.setPointerCapture(e.pointerId);
 
-      // Capture pointer to the root so pointermove/pointerup keep firing here
-      // even if the cursor moves outside the note at high velocity.
-      rootRef.current?.setPointerCapture(e.pointerId);
-
-      const canvasPos = toCanvasCoords(e.clientX, e.clientY);
-      dragAnchor.current = {
-        pointerCanvasX: canvasPos.x,
-        pointerCanvasY: canvasPos.y,
-        noteStartX: note.x,
-        noteStartY: note.y,
-      };
-      currentXRef.current = note.x;
-      isDraggingRef.current = true;
-      setIsDragging(true);
-    },
-    [note.id, note.x, note.y, onBringToFront, toCanvasCoords]
-  );
+    const canvasPos = toCanvasCoords(e.clientX, e.clientY);
+    dragAnchor.current = {
+      pointerCanvasX: canvasPos.x,
+      pointerCanvasY: canvasPos.y,
+      noteStartX: note.x,
+      noteStartY: note.y,
+    };
+    currentXRef.current = note.x;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+  },
+  [note.id, note.x, note.y, onBringToFront, toCanvasCoords]
+);
 
   // ── Pointer-move: translate note in canvas space ──────────────────────────
 
