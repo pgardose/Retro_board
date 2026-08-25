@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Base reset ────────────────────────────────────────────────────────────── */
+
 html,
 body,
 #root {
@@ -11,6 +13,64 @@ body,
   padding: 0;
 }
 
+/* ── Inter optical feature settings ───────────────────────────────────────── */
+/*
+   cv02 — disambiguates lowercase 'l' (straight tail)
+   cv03 — opens the lowercase 'g' to single-storey
+   cv04 — opens the lowercase 'a' to single-storey
+   These three together keep Inter legible at note-card sizes (12–14px)
+   where letterform ambiguity becomes a real readability cost.
+*/
+:root {
+  font-family: "Inter", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Tabular numerics utility ──────────────────────────────────────────────── */
+/*
+   Applied to the zoom indicator and vote counts so digits don't reflow as
+   numbers change. We add it as a plain CSS class rather than a Tailwind
+   arbitrary to avoid JIT purging it.
+*/
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ── Note entrance animation ───────────────────────────────────────────────── */
+/*
+   Defined here instead of purely in Tailwind config so that
+   `@media (prefers-reduced-motion)` can suppress it in one place.
+   The .note-pop class is applied programmatically in StickyNote on mount.
+*/
+.note-pop {
+  animation: note-pop 220ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes note-pop {
+  0%   { opacity: 0; transform: scale(0.90); }
+  60%  { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1.00); }
+}
+
+/* ── Respect reduced-motion preference ─────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .note-pop {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Suppress the scale/rotate during drag for users who find it distracting */
+  .note-dragging {
+    transform: none !important;
+  }
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -19,9 +79,21 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  /* Warm-toned thumb to match the linen canvas */
+  background: #C4BDB5;
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #A89E94;
+}
+
+/* ── Focus ring — global override ──────────────────────────────────────────── */
+/*
+   Tailwind's default focus-visible ring uses ring-blue-500. We override it
+   to the brand indigo so every interactive element shares a consistent
+   focus treatment without per-element utility repetition.
+*/
+:focus-visible {
+  outline: 2px solid #4F46E5;
+  outline-offset: 2px;
 }

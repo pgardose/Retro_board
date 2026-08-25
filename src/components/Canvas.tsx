@@ -16,8 +16,8 @@ import type {
 } from "../hooks/useMultiplayerRoom";
 
 // ─── Shared note width constant ───────────────────────────────────────────────
-// Fix #8: single source of truth used by Canvas layout math and StickyNote width.
-export const NOTE_WIDTH = 220;
+// 240px: slightly wider than before for better readability at typical zoom levels.
+export const NOTE_WIDTH = 240;
 
 // ─── Column definitions ───────────────────────────────────────────────────────
 
@@ -26,9 +26,9 @@ interface ColumnDef {
   label: string;
   emoji: string;
   widthFraction: number;
-  bg: string;
+  laneBg: string;
   headerBg: string;
-  headerText: string;
+  accentColor: string;
   dividerColor: string;
 }
 
@@ -38,30 +38,30 @@ const COLUMNS: ColumnDef[] = [
     label: "Went Well",
     emoji: "✅",
     widthFraction: 1 / 3,
-    bg: "bg-emerald-50/60",
-    headerBg: "bg-emerald-100",
-    headerText: "text-emerald-800",
-    dividerColor: "border-emerald-200",
+    laneBg: "linear-gradient(180deg, #F1FAF4 0%, #EDE9E3 100%)",
+    headerBg: "#D5EDDA",
+    accentColor: "#2E7D52",
+    dividerColor: "#B4D9BE",
   },
   {
     key: "needs-improvement",
     label: "Needs Improvement",
     emoji: "🔧",
     widthFraction: 1 / 3,
-    bg: "bg-amber-50/60",
-    headerBg: "bg-amber-100",
-    headerText: "text-amber-800",
-    dividerColor: "border-amber-200",
+    laneBg: "linear-gradient(180deg, #FFFCF0 0%, #EDE9E3 100%)",
+    headerBg: "#FDE9B0",
+    accentColor: "#92600A",
+    dividerColor: "#F5D57A",
   },
   {
     key: "action-items",
     label: "Action Items",
     emoji: "🚀",
     widthFraction: 1 / 3,
-    bg: "bg-sky-50/60",
-    headerBg: "bg-sky-100",
-    headerText: "text-sky-800",
-    dividerColor: "border-sky-200",
+    laneBg: "linear-gradient(180deg, #F0F5FF 0%, #EDE9E3 100%)",
+    headerBg: "#DBEAFE",
+    accentColor: "#1E4FBF",
+    dividerColor: "#BFCFEF",
   },
 ];
 
@@ -72,10 +72,9 @@ const MIN_SCALE = 0.15;
 const MAX_SCALE = 3.0;
 const WHEEL_SENSITIVITY = 0.001;
 
-/**
- * Given a note's X coordinate (in canvas space), determine which column it
- * belongs to. Exported so StickyNote drag-end can call it directly if needed.
- */
+// Warm linen — the signature canvas background
+const CANVAS_BG = "#EDE9E3";
+
 export function categoryFromX(x: number): NoteCategory {
   let accumulated = 0;
   for (const col of COLUMNS) {
@@ -85,21 +84,17 @@ export function categoryFromX(x: number): NoteCategory {
   return COLUMNS[COLUMNS.length - 1].key;
 }
 
-// ─── Transform state ──────────────────────────────────────────────────────────
+// ─── Transform ────────────────────────────────────────────────────────────────
 
 interface Transform {
-  x: number; // canvas translateX in screen pixels
-  y: number; // canvas translateY in screen pixels
+  x: number;
+  y: number;
   scale: number;
 }
 
 // ─── Remote cursor ────────────────────────────────────────────────────────────
 
-interface RemoteCursorProps {
-  peer: AwarenessUser;
-}
-
-const RemoteCursor: React.FC<RemoteCursorProps> = ({ peer }) => {
+const RemoteCursor: React.FC<{ peer: AwarenessUser }> = ({ peer }) => {
   if (!peer.cursor) return null;
   return (
     <div
@@ -114,19 +109,13 @@ const RemoteCursor: React.FC<RemoteCursorProps> = ({ peer }) => {
       }}
     >
       <svg
-        width="20"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
+        width="20" height="20" viewBox="0 0 20 20" fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}
+        style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.35))" }}
       >
         <path
           d="M3 2L16 10L9.5 11.5L6.5 18L3 2Z"
-          fill={peer.color}
-          stroke="white"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
+          fill={peer.color} stroke="white" strokeWidth="1.5" strokeLinejoin="round"
         />
       </svg>
       <span
@@ -139,43 +128,58 @@ const RemoteCursor: React.FC<RemoteCursorProps> = ({ peer }) => {
   );
 };
 
-// ─── Column background layer ──────────────────────────────────────────────────
+// ─── Column layer ─────────────────────────────────────────────────────────────
+//
+// Signature design element: tall poster-style headers, each with a large emoji,
+// bold sentence-case label in the column's accent colour, a 4px solid accent
+// bottom-border, and a gradient lane that fades into the shared linen canvas.
+// Column separators use inset box-shadow for a softer, tapered divider.
 
-const ColumnLayer: React.FC = () => (
-  <div
-    style={{
-      position: "absolute",
-      inset: 0,
-      display: "flex",
-      pointerEvents: "none",
-    }}
-  >
+const ColumnLayer: React.FC<{ noteCounts: Record<NoteCategory, number> }> = ({
+  noteCounts,
+}) => (
+  <div style={{ position: "absolute", inset: 0, display: "flex", pointerEvents: "none" }}>
     {COLUMNS.map((col, i) => (
       <div
         key={col.key}
-        style={{ width: `${col.widthFraction * 100}%`, flexShrink: 0 }}
-        className={`
-          relative h-full
-          ${col.bg}
-          ${i < COLUMNS.length - 1 ? `border-r-2 ${col.dividerColor}` : ""}
-        `}
+        style={{
+          width: `${col.widthFraction * 100}%`,
+          flexShrink: 0,
+          background: col.laneBg,
+          boxShadow:
+            i < COLUMNS.length - 1
+              ? `inset -1px 0 0 0 ${col.dividerColor}, inset -4px 0 12px -4px rgba(0,0,0,0.04)`
+              : "none",
+          position: "relative",
+        }}
       >
-        {/* Column header — not sticky in the canvas since the whole board
-            pans; it's pinned at y=0 in canvas space which is always visible
-            near the top when zoomed out normally. */}
+        {/* ── Poster header ── */}
         <div
-          className={`
-            flex items-center gap-2
-            px-5 py-3
-            ${col.headerBg} ${col.headerText}
-            border-b-2 ${col.dividerColor}
-            shadow-sm
-          `}
+          style={{ background: col.headerBg, borderBottom: `4px solid ${col.accentColor}` }}
+          className="flex items-center gap-3 px-6 py-4"
         >
-          <span className="text-lg leading-none">{col.emoji}</span>
-          <span className="font-bold text-sm tracking-wide uppercase">
+          <span
+            style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.15))" }}
+            className="text-2xl leading-none select-none"
+            aria-hidden="true"
+          >
+            {col.emoji}
+          </span>
+          <span
+            style={{ color: col.accentColor }}
+            className="font-extrabold text-[15px] tracking-tight leading-none"
+          >
             {col.label}
           </span>
+          {noteCounts[col.key] > 0 && (
+            <span
+              style={{ backgroundColor: col.accentColor, color: "#fff" }}
+              className="ml-auto tabular text-[11px] font-bold px-2 py-0.5 rounded-full leading-none"
+              title={`${noteCounts[col.key]} note${noteCounts[col.key] !== 1 ? "s" : ""}`}
+            >
+              {noteCounts[col.key]}
+            </span>
+          )}
         </div>
       </div>
     ))}
@@ -191,7 +195,6 @@ interface CanvasProps {
   localUserName: string;
   boardSettings: BoardSettings;
   onUpdateCursor: (x: number, y: number) => void;
-  // Fix #6: addNote now returns the new note's id
   onAddNote: (x: number, y: number) => string;
   onUpdateNote: (id: string, patch: Partial<Omit<NoteData, "id">>) => void;
   onDeleteNote: (id: string) => void;
@@ -203,29 +206,6 @@ interface CanvasProps {
 
 // ─── Canvas ───────────────────────────────────────────────────────────────────
 
-/**
- * Canvas — v5 (custom pan/zoom, zero library dependencies for navigation)
- *
- * Navigation model (Figma-parity):
- *   Space + Left-drag         → pan
- *   Middle-Mouse-Button drag  → pan
- *   Ctrl/Meta + Wheel         → zoom centered on cursor (also captures trackpad pinch)
- *   Wheel (no modifier)       → pan canvas (trackpad two-finger scroll)
- *   Double-click              → add note at cursor position
- *
- * Architecture:
- *   - `viewportRef`  — the fixed-size outer div that fills the screen. All
- *     pointer events are attached here. Never transformed.
- *   - `canvasRef`    — the 4000×3000 inner div. Receives a CSS
- *     `transform: translate(x,y) scale(s)` driven by `transform` state.
- *     This is the coordinate space all note x/y values live in.
- *   - All coordinate math converts screen-space pointer positions into
- *     canvas-space via:  canvasX = (screenX - transform.x) / transform.scale
- *
- * UI separation:
- *   - The floating action dock is `position: fixed`, rendered OUTSIDE the
- *     viewport div entirely, so it is 100% immune to pan/zoom transforms.
- */
 export const Canvas: React.FC<CanvasProps> = ({
   notes,
   peers,
@@ -242,12 +222,9 @@ export const Canvas: React.FC<CanvasProps> = ({
   roomId,
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
+  const canvasRef  = useRef<HTMLDivElement>(null);
 
-  // ── Transform state ───────────────────────────────────────────────────────
-  // Using a ref for the "live" value during pointer events (avoids stale
-  // closures inside event listeners) and mirroring to React state only when
-  // we need to trigger a re-render (i.e. to pass `scale` down to StickyNote).
+  // ── Transform ─────────────────────────────────────────────────────────────
   const transformRef = useRef<Transform>({ x: 0, y: 0, scale: 1 });
   const [scale, setScale] = useState(1);
 
@@ -259,24 +236,17 @@ export const Canvas: React.FC<CanvasProps> = ({
     transformRef.current = t;
   }, []);
 
-  // ── Set initial position on mount ─────────────────────────────────────────
-  // Centers the board horizontally in the viewport at scale 1, with a small
-  // top margin so the column headers are immediately visible.
   useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const vw = viewport.clientWidth;
-    // Center the board horizontally; give 24px headroom at the top.
-    const initialX = Math.max(0, (vw - CANVAS_WIDTH) / 2);
-    const initialY = 24;
-    const initial: Transform = { x: initialX, y: initialY, scale: 1 };
-    applyTransform(initial);
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const initialX = Math.max(0, (vp.clientWidth - CANVAS_WIDTH) / 2);
+    applyTransform({ x: initialX, y: 24, scale: 1 });
     setScale(1);
   }, [applyTransform]);
 
-  // ── Spacebar panning gate ─────────────────────────────────────────────────
+  // ── Spacebar gate ─────────────────────────────────────────────────────────
   const spacePressed = useRef(false);
-  const [spaceDown, setSpaceDown] = useState(false); // drives cursor class only
+  const [spaceDown, setSpaceDown] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -284,230 +254,118 @@ export const Canvas: React.FC<CanvasProps> = ({
       const tag = (document.activeElement?.tagName ?? "").toLowerCase();
       if (tag === "textarea" || tag === "input") return;
       e.preventDefault();
-      if (!spacePressed.current) {
-        spacePressed.current = true;
-        setSpaceDown(true);
-      }
+      if (!spacePressed.current) { spacePressed.current = true; setSpaceDown(true); }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
       spacePressed.current = false;
       setSpaceDown(false);
-      // Always cancel any in-progress pan
       panAnchor.current = null;
     };
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keyup",   onKeyUp);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keyup",   onKeyUp);
     };
   }, []);
 
-  // ── Pan via Space+drag or MMB drag ────────────────────────────────────────
-  // Anchor stores the pointer position at drag-start and the transform at
-  // that moment; each move recomputes the delta from the anchor.
-  const panAnchor = useRef<{
-    pointerX: number;
-    pointerY: number;
-    tx: number;
-    ty: number;
-  } | null>(null);
-
-  // Fix #4: track active panning state to drive grabbing cursor
+  // ── Pan ───────────────────────────────────────────────────────────────────
+  const panAnchor = useRef<{ pointerX: number; pointerY: number; tx: number; ty: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
 
-  const handleViewportPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      // Allow left (0), middle (1), and right (2) buttons
-      const LEFT = 0;
-      const MIDDLE = 1;
-      const RIGHT = 2;
-      if (e.button !== LEFT && e.button !== MIDDLE && e.button !== RIGHT) return;
+  const handleViewportPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+    if ((e.target as HTMLElement).closest("[data-note-root]")) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const t = transformRef.current;
+    panAnchor.current = { pointerX: e.clientX, pointerY: e.clientY, tx: t.x, ty: t.y };
+    setIsPanning(true);
+  }, []);
 
-      // Don't pan if the pointer is on a sticky note
-      if ((e.target as HTMLElement).closest("[data-note-root]")) return;
+  const handleViewportPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const t = transformRef.current;
+    onUpdateCursor((e.clientX - t.x) / t.scale, (e.clientY - t.y) / t.scale);
+    if (!panAnchor.current) return;
+    applyTransform({
+      ...t,
+      x: panAnchor.current.tx + (e.clientX - panAnchor.current.pointerX),
+      y: panAnchor.current.ty + (e.clientY - panAnchor.current.pointerY),
+    });
+  }, [onUpdateCursor, applyTransform]);
 
-      // For right-click, we must prevent the context menu
-      e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
+  const handleViewportPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (panAnchor.current) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      panAnchor.current = null;
+      setIsPanning(false);
+    }
+  }, []);
 
-      const t = transformRef.current;
-      panAnchor.current = {
-        pointerX: e.clientX,
-        pointerY: e.clientY,
-        tx: t.x,
-        ty: t.y,
-      };
-      setIsPanning(true);
-    },
-    []
-  );
+  const handleContextMenu = useCallback((e: React.MouseEvent) => { e.preventDefault(); }, []);
 
-  const handleViewportPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      // ── Cursor broadcast (always) ────────────────────────────────────────
-      const t = transformRef.current;
-      const canvasX = (e.clientX - t.x) / t.scale;
-      const canvasY = (e.clientY - t.y) / t.scale;
-      onUpdateCursor(canvasX, canvasY);
-
-      // ── Pan (only when anchor is set) ────────────────────────────────────
-      if (!panAnchor.current) return;
-      const dx = e.clientX - panAnchor.current.pointerX;
-      const dy = e.clientY - panAnchor.current.pointerY;
-      applyTransform({
-        ...t,
-        x: panAnchor.current.tx + dx,
-        y: panAnchor.current.ty + dy,
-      });
-    },
-    [onUpdateCursor, applyTransform]
-  );
-
-  const handleViewportPointerUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (panAnchor.current) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-        panAnchor.current = null;
-        setIsPanning(false);
-      }
-    },
-    []
-  );
-
-  // Fix #5: prevent context menu on the viewport (covers right-click and MMB)
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      e.preventDefault();
-    },
-    []
-  );
-
-  // ── Wheel: zoom or pan depending on modifier keys ─────────────────────────
-  //
-  // BRANCH A — Zoom  (ctrlKey || metaKey is true)
-  //   Triggered by:
-  //     • Ctrl + mouse wheel  (Windows / Linux)
-  //     • Cmd  + mouse wheel  (macOS)
-  //     • Trackpad pinch-to-zoom (browser synthesises ctrlKey=true for pinch)
-  //   Formula: Figma's cursor-anchored zoom —
-  //     newTranslate = cursorScreen - (cursorScreen - oldTranslate) × (newScale / oldScale)
-  //   e.preventDefault() is essential here to suppress the browser's own
-  //   page-zoom on Ctrl+scroll.
-  //
-  // BRANCH B — Pan  (no modifier keys)
-  //   Triggered by:
-  //     • Trackpad two-finger scroll (deltaX + deltaY, DOM_DELTA_PIXEL mode)
-  //     • Mouse wheel vertical scroll (deltaY only, may be DOM_DELTA_LINE)
-  //   The OS-provided pixel deltas map directly to screen-space translation.
-  //   We do NOT divide by scale: a 50px finger movement should always move
-  //   the canvas 50px on screen, regardless of zoom level.
-  //   e.preventDefault() stops the browser from scrolling the page.
+  // ── Wheel: zoom (Ctrl/Meta) or pan (plain) ────────────────────────────────
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
+    const vp = viewportRef.current;
+    if (!vp) return;
     const onWheel = (e: WheelEvent) => {
-      // Always prevent default: stops browser zoom (Ctrl+scroll) and page
-      // scroll (two-finger swipe) from interfering with canvas navigation.
       e.preventDefault();
-
       const t = transformRef.current;
-
-      // ── BRANCH A: Zoom ──────────────────────────────────────────────────
       if (e.ctrlKey || e.metaKey) {
-        const rawDelta =
-          e.deltaMode === 0
-            ? e.deltaY                  // pixel mode — trackpad pinch, Chrome
-            : e.deltaY * 20;            // line/page mode — Firefox mouse wheel
-
-        const zoomFactor = 1 - rawDelta * WHEEL_SENSITIVITY;
-        const newScale = Math.min(
-          MAX_SCALE,
-          Math.max(MIN_SCALE, t.scale * zoomFactor)
-        );
-
+        const rawDelta  = e.deltaMode === 0 ? e.deltaY : e.deltaY * 20;
+        const newScale  = Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * (1 - rawDelta * WHEEL_SENSITIVITY)));
         if (newScale === t.scale) return;
-
-        const viewportRect = viewport.getBoundingClientRect();
-        const px = e.clientX - viewportRect.left;
-        const py = e.clientY - viewportRect.top;
-
-        // Figma cursor-anchored zoom formula
-        const newX = px - (px - t.x) * (newScale / t.scale);
-        const newY = py - (py - t.y) * (newScale / t.scale);
-
-        applyTransform({ x: newX, y: newY, scale: newScale });
-        // Trigger a React re-render only for scale so StickyNote receives the
-        // updated value for its own pointer-capture drag math.
+        const rect = vp.getBoundingClientRect();
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+        applyTransform({
+          x: px - (px - t.x) * (newScale / t.scale),
+          y: py - (py - t.y) * (newScale / t.scale),
+          scale: newScale,
+        });
         setScale(newScale);
         return;
       }
-
-      // ── BRANCH B: Pan ───────────────────────────────────────────────────
-      const dx = e.deltaMode === 0 ? e.deltaX : e.deltaX * 20;
-      const dy = e.deltaMode === 0 ? e.deltaY : e.deltaY * 20;
-
       applyTransform({
         ...t,
-        x: t.x - dx,
-        y: t.y - dy,
+        x: t.x - (e.deltaMode === 0 ? e.deltaX : e.deltaX * 20),
+        y: t.y - (e.deltaMode === 0 ? e.deltaY : e.deltaY * 20),
       });
-      // No setScale call — scale didn't change, no re-render needed.
     };
-
-    viewport.addEventListener("wheel", onWheel, { passive: false });
-    return () => viewport.removeEventListener("wheel", onWheel);
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onWheel);
   }, [applyTransform]);
 
-  // ── Note creation on double-click ─────────────────────────────────────────
-  const handleDoubleClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      // Ignore clicks that land on an existing note
-      if ((e.target as HTMLElement).closest("[data-note-root]")) return;
+  // ── Note creation ─────────────────────────────────────────────────────────
+  const [latestNoteId, setLatestNoteId] = useState<string | null>(null);
 
-      const t = transformRef.current;
-      // Convert screen coords to canvas coords, then offset so the note's
-      // center lands under the cursor (note is NOTE_WIDTH px wide × ~140px tall).
-      // Fix #8: use NOTE_WIDTH constant instead of hardcoded 220 / 110
-      const canvasX = (e.clientX - t.x) / t.scale - NOTE_WIDTH / 2;
-      const canvasY = (e.clientY - t.y) / t.scale - 60;
-      const id = onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
-      setLatestNoteId(id);
-    },
-    [onAddNote]
-  );
-
-  // ── "Add note" from dock button ───────────────────────────────────────────
-  // Places a note at the visible center of the current viewport.
-  const handleAddNoteFromDock = useCallback(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
+  const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("[data-note-root]")) return;
     const t = transformRef.current;
-    const vw = viewport.clientWidth;
-    const vh = viewport.clientHeight;
-    // Center of the current view in canvas space
-    // Fix #8: use NOTE_WIDTH constant instead of hardcoded 110 offset
-    const canvasX = (vw / 2 - t.x) / t.scale - NOTE_WIDTH / 2;
-    const canvasY = (vh / 2 - t.y) / t.scale - 60;
-    const id = onAddNote(Math.max(0, canvasX), Math.max(0, canvasY));
+    const id = onAddNote(
+      Math.max(0, (e.clientX - t.x) / t.scale - NOTE_WIDTH / 2),
+      Math.max(0, (e.clientY - t.y) / t.scale - 60),
+    );
     setLatestNoteId(id);
   }, [onAddNote]);
 
-  // Fix #6: track the most recently created note id so we can auto-focus it
-  const [latestNoteId, setLatestNoteId] = useState<string | null>(null);
+  const handleAddNoteFromDock = useCallback(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const t = transformRef.current;
+    const id = onAddNote(
+      Math.max(0, (vp.clientWidth  / 2 - t.x) / t.scale - NOTE_WIDTH / 2),
+      Math.max(0, (vp.clientHeight / 2 - t.y) / t.scale - 60),
+    );
+    setLatestNoteId(id);
+  }, [onAddNote]);
 
-  // ── Note drag-end: recalculate category from final X ─────────────────────
-  const handleNoteDragEnd = useCallback(
-    (id: string, finalX: number) => {
-      const category = categoryFromX(finalX);
-      onUpdateNote(id, { category });
-    },
-    [onUpdateNote]
-  );
+  const handleNoteDragEnd = useCallback((id: string, finalX: number) => {
+    onUpdateNote(id, { category: categoryFromX(finalX) });
+  }, [onUpdateNote]);
 
-  // ── PNG export ────────────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExport = useCallback(async () => {
@@ -516,22 +374,14 @@ export const Canvas: React.FC<CanvasProps> = ({
     setIsExporting(true);
     try {
       const dataUrl = await toPng(node, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: "#f1f5f9",
-        // Capture the element at its natural 4000×3000 size, ignoring the
-        // current CSS transform, so the exported PNG is always full-res.
-        width: CANVAS_WIDTH,
-        height: CANVAS_HEIGHT,
-        style: {
-          transform: "none",
-          transformOrigin: "0 0",
-        },
+        cacheBust: true, pixelRatio: 2, backgroundColor: CANVAS_BG,
+        width: CANVAS_WIDTH, height: CANVAS_HEIGHT,
+        style: { transform: "none", transformOrigin: "0 0" },
       });
-      const link = document.createElement("a");
-      link.download = `retro-board-${roomId}-${Date.now()}.png`;
-      link.href = dataUrl;
-      link.click();
+      const a = document.createElement("a");
+      a.download = `retro-board-${roomId}-${Date.now()}.png`;
+      a.href = dataUrl;
+      a.click();
     } catch (err) {
       console.error("Export failed", err);
     } finally {
@@ -539,61 +389,51 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   }, [roomId]);
 
-  const remotePeers = peers.filter((p) => p.clientId !== localClientId);
+  // ── Note counts for column badges ─────────────────────────────────────────
+  const noteCounts = React.useMemo<Record<NoteCategory, number>>(() => {
+    const counts: Record<NoteCategory, number> = {
+      "went-well": 0, "needs-improvement": 0, "action-items": 0,
+    };
+    for (const note of notes) {
+      const cat = note.category ?? categoryFromX(note.x);
+      counts[cat] = (counts[cat] ?? 0) + 1;
+    }
+    return counts;
+  }, [notes]);
 
-  // Fix #4: derive cursor style — grabbing during any active pan, grab when
-  // spacebar is held (ready to pan), crosshair otherwise.
-  const cursorStyle = isPanning ? "grabbing" : spaceDown ? "grab" : "crosshair";
+  const remotePeers  = peers.filter((p) => p.clientId !== localClientId);
+  const cursorStyle  = isPanning ? "grabbing" : spaceDown ? "grab" : "crosshair";
+  const zoomPercent  = Math.round(scale * 100);
 
   return (
     <>
-      {/* ── Viewport ───────────────────────────────────────────────────────
-           Fills the remaining screen area below any app header. Owns all
-           pointer / wheel events. Never itself transformed.
-      ───────────────────────────────────────────────────────────────────── */}
+      {/* ── Viewport ──────────────────────────────────────────────────────── */}
       <div
         ref={viewportRef}
         className="relative flex-1 overflow-hidden"
         style={{
-          // Fix #4: use unified cursor state covering Space, MMB, and all pans
           cursor: cursorStyle,
-          backgroundImage:
-            "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
-          backgroundSize: "32px 32px",
-          backgroundColor: "#f1f5f9",
-          // Dot-grid background is fixed in screen space, so it doesn't
-          // scroll with the canvas — gives an "infinite canvas" feel.
-          backgroundAttachment: "local",
+          backgroundImage: "radial-gradient(circle, #C4BDB5 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+          backgroundColor: CANVAS_BG,
         }}
         onPointerDown={handleViewportPointerDown}
         onPointerMove={handleViewportPointerMove}
         onPointerUp={handleViewportPointerUp}
         onDoubleClick={handleDoubleClick}
-        // Fix #5: block native context menu on all button types (right-click, MMB)
         onContextMenu={handleContextMenu}
       >
-        {/* ── Canvas (4000 × 3000) ─────────────────────────────────────────
-             Positioned at (0,0) relative to the viewport; the CSS transform
-             set by `applyTransform` handles all pan and zoom. transform-
-             origin is "0 0" so scale math is trivially `(point - translate)
-             / scale`.
-        ──────────────────────────────────────────────────────────────────── */}
+        {/* ── Canvas 4000×3000 ──────────────────────────────────────────── */}
         <div
           ref={canvasRef}
           style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: CANVAS_WIDTH,
-            height: CANVAS_HEIGHT,
-            backgroundColor: "#f1f5f9",
-            // transformOrigin and initial transform applied in useLayoutEffect
+            position: "absolute", top: 0, left: 0,
+            width: CANVAS_WIDTH, height: CANVAS_HEIGHT,
+            backgroundColor: CANVAS_BG,
           }}
         >
-          {/* Column tinted backgrounds + headers — below all notes */}
-          <ColumnLayer />
+          <ColumnLayer noteCounts={noteCounts} />
 
-          {/* ── Sticky notes ──────────────────────────────────────────────── */}
           {notes.map((note) => (
             <StickyNote
               key={note.id}
@@ -607,131 +447,159 @@ export const Canvas: React.FC<CanvasProps> = ({
               onUpvote={onUpvoteNote}
               onBringToFront={onBringToFront}
               onDragEnd={handleNoteDragEnd}
-              // Fix #6: only the freshest note gets focusOnMount=true
               focusOnMount={note.id === latestNoteId}
             />
           ))}
 
-          {/* ── Remote cursors ────────────────────────────────────────────── */}
           {remotePeers.map((peer) => (
             <RemoteCursor key={peer.clientId} peer={peer} />
           ))}
         </div>
 
-        {/* ── Empty-state hint ──────────────────────────────────────────────
-             Rendered inside viewport (not canvas) so it's always centered in
-             the visible area, regardless of pan/zoom state.
-        ──────────────────────────────────────────────────────────────────── */}
+        {/* ── Empty state ───────────────────────────────────────────────── */}
         {notes.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center bg-white/70 backdrop-blur-sm rounded-2xl px-8 py-6 shadow-sm border border-slate-200">
-              <p className="text-3xl mb-2">✦</p>
-              <p className="text-slate-600 font-medium text-sm">
+            <div
+              className="text-center rounded-2xl px-10 py-7 border"
+              style={{
+                background: "rgba(255,253,248,0.82)",
+                backdropFilter: "blur(8px)",
+                borderColor: "rgba(180,160,130,0.25)",
+                boxShadow: "0 2px 16px 0 rgba(60,45,20,0.07)",
+              }}
+            >
+              <p className="text-3xl mb-3 select-none" aria-hidden="true">✦</p>
+              <p className="font-semibold text-[15px] text-stone-700 mb-1">
                 Double-click anywhere to add a note
               </p>
-              <p className="text-slate-400 text-xs mt-1">
-                Drop into columns · Space/MMB + drag to pan · Two-finger scroll · Pinch or Ctrl+scroll to zoom
+              <p className="text-[12px] text-stone-400 leading-relaxed">
+                Drop notes into columns · Space or MMB + drag to pan
+                <br />
+                Two-finger scroll · Pinch or Ctrl+scroll to zoom
               </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* ── Floating action dock ─────────────────────────────────────────────
-           Rendered as a sibling of the viewport div (not a child), and
-           `position: fixed` — completely isolated from the canvas transform
-           layer. z-[100] keeps it above everything including dragged notes.
-      ──────────────────────────────────────────────────────────────────────── */}
+      {/* ── Zoom chip — fixed top-right, immune to canvas transform ──────── */}
+      <div className="fixed top-[60px] right-4 z-[90] pointer-events-none">
+        <div
+          className="tabular text-[11px] font-semibold px-2.5 py-1 rounded-lg select-none"
+          style={{
+            background: "rgba(255,253,248,0.88)",
+            backdropFilter: "blur(6px)",
+            border: "1px solid rgba(180,160,130,0.30)",
+            boxShadow: "0 1px 4px rgba(60,45,20,0.08)",
+            color: "#57534e",
+          }}
+          aria-label={`Zoom level: ${zoomPercent}%`}
+        >
+          {zoomPercent}%
+        </div>
+      </div>
+
+      {/* ── Floating action dock ──────────────────────────────────────────── */}
       <div
         className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100]
-                   flex items-center gap-2 px-3 py-2.5
-                   bg-white/80 backdrop-blur-md
-                   border border-slate-200/80
-                   rounded-2xl shadow-xl shadow-slate-900/10"
-        // Prevent double-click on the dock from creating a note
+                   flex items-center gap-1.5 px-2.5 py-2"
+        style={{
+          background: "rgba(255,253,248,0.90)",
+          backdropFilter: "blur(12px)",
+          border: "1px solid rgba(180,160,130,0.28)",
+          borderRadius: "16px",
+          boxShadow: "0 8px 32px 0 rgba(30,20,10,0.10), 0 1px 4px 0 rgba(30,20,10,0.06)",
+        }}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        {/* Fix #3: Zoom level indicator */}
-        <div className="flex items-center px-2">
-          <span className="text-xs font-mono text-slate-500 tabular-nums w-10 text-center select-none">
-            {Math.round(scale * 100)}%
-          </span>
-        </div>
-
-        <div className="w-px h-5 bg-slate-200 mx-0.5" />
-
-        {/* Add Note */}
+        {/* Primary: Add note */}
         <DockButton
           onClick={handleAddNoteFromDock}
-          icon={<Plus size={15} />}
+          icon={<Plus size={14} strokeWidth={2.5} />}
           label="Add note"
           variant="primary"
         />
 
-        <div className="w-px h-5 bg-slate-200 mx-0.5" />
+        <DockDivider />
 
-        {/* Reveal / Hide */}
+        {/* Secondary: Reveal / Hide */}
         <DockButton
           onClick={onToggleReveal}
-          icon={
-            boardSettings.isRevealed ? (
-              <EyeOff size={15} />
-            ) : (
-              <Eye size={15} />
-            )
-          }
-          label={boardSettings.isRevealed ? "Hide notes" : "Reveal notes"}
+          icon={boardSettings.isRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          label={boardSettings.isRevealed ? "Hide" : "Reveal"}
           variant={boardSettings.isRevealed ? "active" : "default"}
         />
 
-        {/* Export */}
+        {/* Tertiary: Export */}
         <DockButton
           onClick={handleExport}
           disabled={isExporting}
-          icon={<Download size={15} />}
-          label={isExporting ? "Exporting…" : "Export PNG"}
-          variant="default"
+          icon={<Download size={14} />}
+          label={isExporting ? "Exporting…" : "Export"}
+          variant="ghost"
         />
       </div>
     </>
   );
 };
 
-// ─── Dock button ──────────────────────────────────────────────────────────────
+// ─── Dock primitives ──────────────────────────────────────────────────────────
+
+const DockDivider: React.FC = () => (
+  <div
+    className="w-px h-4 mx-1 shrink-0"
+    style={{ background: "rgba(180,160,130,0.35)" }}
+    aria-hidden="true"
+  />
+);
 
 interface DockButtonProps {
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  variant?: "default" | "primary" | "active";
+  variant?: "default" | "primary" | "active" | "ghost";
   disabled?: boolean;
 }
 
 const DockButton: React.FC<DockButtonProps> = ({
-  onClick,
-  icon,
-  label,
-  variant = "default",
-  disabled = false,
+  onClick, icon, label, variant = "default", disabled = false,
 }) => {
   const base =
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold " +
-    "transition-all duration-150 active:scale-95 select-none whitespace-nowrap ";
+    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl " +
+    "text-[12px] font-semibold leading-none select-none whitespace-nowrap " +
+    "transition-all duration-100 active:scale-[0.94] ";
 
-  const variants: Record<string, string> = {
-    default:
-      "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200",
-    primary:
-      "bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 shadow-sm",
-    active:
-      "bg-violet-600 hover:bg-violet-700 text-white border border-violet-700 shadow-sm",
+  const styles: Record<string, React.CSSProperties> = {
+    default: {
+      background: "rgba(237,233,227,0.80)",
+      color: "#44403c",
+      border: "1px solid rgba(180,160,130,0.30)",
+    },
+    primary: {
+      background: "#4F46E5",
+      color: "#ffffff",
+      border: "1px solid #4338CA",
+      boxShadow: "0 1px 4px rgba(79,70,229,0.30)",
+    },
+    active: {
+      background: "#7C3AED",
+      color: "#ffffff",
+      border: "1px solid #6D28D9",
+      boxShadow: "0 1px 4px rgba(124,58,237,0.30)",
+    },
+    ghost: {
+      background: "transparent",
+      color: "#78716c",
+      border: "1px solid transparent",
+    },
   };
 
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`${base} ${variants[variant]} ${disabled ? "opacity-50 cursor-wait" : ""}`}
+      className={`${base} ${disabled ? "opacity-50 cursor-wait" : "hover:brightness-95"}`}
+      style={styles[variant]}
       aria-label={label}
       title={label}
     >

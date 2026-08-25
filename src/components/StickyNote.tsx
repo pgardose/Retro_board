@@ -1,47 +1,58 @@
 import React, { useRef, useState, useCallback, useEffect } from "react";
-import { X, GripVertical, ThumbsUp } from "lucide-react";
+import { X, ThumbsUp } from "lucide-react";
 import type { NoteData, NoteColor } from "../hooks/useMultiplayerRoom";
-// Fix #8: import the shared NOTE_WIDTH constant from Canvas
 import { NOTE_WIDTH } from "./Canvas";
 
-// ─── Color definitions ────────────────────────────────────────────────────────
+// ─── Color palette ────────────────────────────────────────────────────────────
+// Warm-toned note surfaces that sit naturally on the linen canvas.
 
 interface ColorDef {
+  /** Card surface */
   bg: string;
+  /** Swatch dot */
   dot: string;
+  /** Card border + swatch ring-when-selected */
   border: string;
+  /** Drag-handle header strip */
   header: string;
+  /** Textarea fill */
   textarea: string;
+  /** Text accent used for focus ring */
+  accent: string;
 }
 
 const COLOR_MAP: Record<NoteColor, ColorDef> = {
   yellow: {
-    bg: "bg-amber-100",
-    dot: "bg-amber-400",
-    border: "border-amber-400",
-    header: "bg-amber-200",
-    textarea: "bg-amber-50",
+    bg:       "#FEF9C3",
+    dot:      "#EAB308",
+    border:   "#FDE047",
+    header:   "#FEF08A",
+    textarea: "#FEFCE8",
+    accent:   "#CA8A04",
   },
   blue: {
-    bg: "bg-sky-100",
-    dot: "bg-sky-400",
-    border: "border-sky-400",
-    header: "bg-sky-200",
-    textarea: "bg-sky-50",
+    bg:       "#DBEAFE",
+    dot:      "#3B82F6",
+    border:   "#93C5FD",
+    header:   "#BFDBFE",
+    textarea: "#EFF6FF",
+    accent:   "#2563EB",
   },
   pink: {
-    bg: "bg-pink-100",
-    dot: "bg-pink-400",
-    border: "border-pink-400",
-    header: "bg-pink-200",
-    textarea: "bg-pink-50",
+    bg:       "#FCE7F3",
+    dot:      "#EC4899",
+    border:   "#F9A8D4",
+    header:   "#FBCFE8",
+    textarea: "#FDF2F8",
+    accent:   "#DB2777",
   },
   green: {
-    bg: "bg-emerald-100",
-    dot: "bg-emerald-400",
-    border: "border-emerald-400",
-    header: "bg-emerald-200",
-    textarea: "bg-emerald-50",
+    bg:       "#D1FAE5",
+    dot:      "#10B981",
+    border:   "#6EE7B7",
+    header:   "#A7F3D0",
+    textarea: "#ECFDF5",
+    accent:   "#059669",
   },
 };
 
@@ -51,78 +62,21 @@ const NOTE_COLORS: NoteColor[] = ["yellow", "blue", "pink", "green"];
 
 interface StickyNoteProps {
   note: NoteData;
-  /**
-   * Ref to the 4000×3000 canvas div. Used to convert viewport pointer
-   * positions into canvas-space coordinates.
-   */
   canvasRef: React.RefObject<HTMLDivElement>;
   localUserName: string;
-  /**
-   * Whether the board is in "revealed" state. When false, notes authored by
-   * other users have their text blurred.
-   */
   isRevealed: boolean;
-  /**
-   * Current zoom scale of the canvas. Pointer movement deltas arrive in
-   * screen pixels; dividing by `scale` converts them into canvas-space
-   * (unscaled) pixels, keeping the note pinned perfectly to the cursor.
-   */
   scale: number;
   onUpdate: (id: string, patch: Partial<Omit<NoteData, "id">>) => void;
   onDelete: (id: string) => void;
   onUpvote: (id: string) => void;
-  /**
-   * Called on any pointer-down on the note (before a drag begins), so the
-   * note being interacted with always renders above its neighbors.
-   */
   onBringToFront: (id: string) => void;
-  /**
-   * Called after the user releases a drag with the note's final X position.
-   * Canvas uses this to recalculate the note's retro column category.
-   */
   onDragEnd: (id: string, finalX: number) => void;
-  /**
-   * Fix #6: When true, the textarea is focused on first mount.
-   * Pass true only for the most recently created note so the user can
-   * immediately start typing without an extra click.
-   */
+  /** When true, textarea is focused on first mount (new-note auto-focus). */
   focusOnMount?: boolean;
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
-/**
- * StickyNote — v5
- *
- * Interaction model:
- *
- * CLICK ANYWHERE ON NOTE  → calls `onBringToFront` (raises z-index) and
- *                           focuses the textarea if not already editing.
- *
- * DRAG VIA GRIP HANDLE    → moves the note in canvas space. Pointer capture
- *                           is set on the root div (not the handle) so the
- *                           pointermove/pointerup stream is never interrupted
- *                           if the cursor leaves the handle during fast drags.
- *
- * DRAG MATH               → uses `getBoundingClientRect()` of the canvas div
- *                           (which already reflects the current CSS transform)
- *                           then divides by `scale`. This avoids any scrollLeft/
- *                           scrollTop arithmetic and works correctly at any
- *                           zoom level. The anchor approach (delta from drag
- *                           origin) means the note never jumps on pick-up.
- *
- * Z-INDEX                 → persisted value `note.zIndex` is used when idle.
- *                           While dragging, we force 9999 locally so the note
- *                           renders on top immediately, without waiting for the
- *                           Yjs round-trip from `onBringToFront`.
- *
- * CANVAS PAN ISOLATION    → stopPropagation on pointerdown prevents the canvas
- *                           viewport's pan handler from firing when the user
- *                           clicks or drags a note.
- *
- * ESCAPE CANCEL           → Fix #9: pressing Escape during a drag restores the
- *                           note to its position at drag-start and ends the drag.
- */
 export const StickyNote: React.FC<StickyNoteProps> = ({
   note,
   canvasRef,
@@ -136,48 +90,39 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
   onDragEnd,
   focusOnMount = false,
 }) => {
-  const colors = COLOR_MAP[note.color];
-
-  // Ref to the root element — used for pointer capture (not the handle, so
-  // fast drags that leave the handle area don't lose the event stream).
-  const rootRef = useRef<HTMLDivElement>(null);
+  const colors     = COLOR_MAP[note.color];
+  const rootRef    = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Text buffering ────────────────────────────────────────────────────────
   const [localText, setLocalText] = useState(note.text);
   const isEditingRef = useRef(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync remote text updates into the local draft, but only when this user
-  // isn't actively typing (avoids clobbering in-progress keystrokes).
   useEffect(() => {
-    if (!isEditingRef.current) {
-      setLocalText(note.text);
-    }
+    if (!isEditingRef.current) setLocalText(note.text);
   }, [note.text]);
 
-  // Fix #6: auto-focus the textarea on mount when this is the freshest note.
-  // Using a layout effect so the focus happens before the browser paints,
-  // preventing a frame where the note appears un-focused.
+  // Auto-focus on mount for freshly-created notes
   useEffect(() => {
-    if (focusOnMount && textareaRef.current) {
-      textareaRef.current.focus();
-    }
-    // Only run on mount — focusOnMount is intentionally excluded from deps.
+    if (focusOnMount && textareaRef.current) textareaRef.current.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Entrance animation ────────────────────────────────────────────────────
+  // Applied only once on mount via a class that CSS (index.css) defines.
+  // We flip `isNew` off after the animation completes so the class doesn't
+  // fight with the drag-scale transform on subsequent interactions.
+  const [isNew, setIsNew] = useState(focusOnMount);
+  useEffect(() => {
+    if (!isNew) return;
+    const id = setTimeout(() => setIsNew(false), 280); // slightly > 220ms anim
+    return () => clearTimeout(id);
+  }, [isNew]);
+
   // ── Drag state ────────────────────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false);
-  const isDraggingRef = useRef(false); // sync copy for event handlers
+  const isDraggingRef = useRef(false);
 
-  /**
-   * Stores the drag anchor: the canvas-space pointer position at the moment
-   * the drag started, and the note's position at that same moment.
-   * Each pointermove recomputes the delta from this anchor rather than from
-   * the previous frame, which eliminates cumulative floating-point drift.
-   *
-   * Also stores the drag-start pointer id so we can release capture on Escape.
-   */
   const dragAnchor = useRef<{
     pointerCanvasX: number;
     pointerCanvasY: number;
@@ -186,51 +131,28 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
     pointerId: number;
   } | null>(null);
 
-  // Running X value updated each move so onDragEnd gets the final position.
   const currentXRef = useRef<number>(note.x);
 
-  /**
-   * Convert a viewport-space pointer position (clientX/clientY) into the
-   * canvas's own unscaled coordinate space.
-   *
-   * Strategy: `canvasRef.current.getBoundingClientRect()` gives us the
-   * canvas div's on-screen bounding box, which already incorporates the
-   * CSS translate+scale transform applied by Canvas.tsx. Subtracting that
-   * origin and dividing by `scale` lands us in canvas space.
-   */
   const toCanvasCoords = useCallback(
     (clientX: number, clientY: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect() ?? {
-        left: 0,
-        top: 0,
-      };
-      return {
-        x: (clientX - rect.left) / scale,
-        y: (clientY - rect.top) / scale,
-      };
+      const rect = canvasRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
+      return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
     },
     [canvasRef, scale]
   );
 
-  // ── Root pointer-down: bring to front + start drag (if on handle) ─────────
-
+  // ── Pointer down — bring to front + start drag ────────────────────────────
   const handleRootPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
-
-      // Bring to front
       onBringToFront(note.id);
 
-      // Figure out what was clicked
       const target = e.target as HTMLElement;
-      const isTextarea = target.closest("textarea") !== null;
-      const isColorDot = target.closest("button") !== null; // all buttons are color dots or delete
-      const isDelete = target.closest('[aria-label="Delete note"]') !== null;
+      if (
+        target.closest("textarea") ||
+        target.closest("button")
+      ) return;
 
-      // If we clicked a button (color dot or delete) or the textarea, don't start a drag
-      if (isTextarea || isColorDot || isDelete) return;
-
-      // ── Start drag ──────────────────────────────────────────────────────────
       e.preventDefault();
       rootRef.current?.setPointerCapture(e.pointerId);
 
@@ -249,106 +171,75 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
     [note.id, note.x, note.y, onBringToFront, toCanvasCoords]
   );
 
-  // ── Pointer-move: translate note in canvas space ──────────────────────────
-
+  // ── Pointer move ──────────────────────────────────────────────────────────
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!isDraggingRef.current || !dragAnchor.current) return;
-
-      // Convert current pointer position to canvas space.
-      const canvasPos = toCanvasCoords(e.clientX, e.clientY);
-
-      // Delta from anchor in canvas space.
-      const dx = canvasPos.x - dragAnchor.current.pointerCanvasX;
-      const dy = canvasPos.y - dragAnchor.current.pointerCanvasY;
-
-      // New note position, clamped to canvas bounds.
-      const newX = Math.max(0, dragAnchor.current.noteStartX + dx);
-      const newY = Math.max(0, dragAnchor.current.noteStartY + dy);
-
+      const pos = toCanvasCoords(e.clientX, e.clientY);
+      const newX = Math.max(0, dragAnchor.current.noteStartX + (pos.x - dragAnchor.current.pointerCanvasX));
+      const newY = Math.max(0, dragAnchor.current.noteStartY + (pos.y - dragAnchor.current.pointerCanvasY));
       currentXRef.current = newX;
-
-      // Write position into Yjs on every move — propagates to all peers
-      // in real time, creating the collaborative drag experience.
       onUpdate(note.id, { x: newX, y: newY });
     },
     [note.id, toCanvasCoords, onUpdate]
   );
 
-  // ── Pointer-up: commit category and end drag ──────────────────────────────
-
+  // ── Pointer up ────────────────────────────────────────────────────────────
   const handlePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!isDraggingRef.current) return;
-
       rootRef.current?.releasePointerCapture(e.pointerId);
-      dragAnchor.current = null;
+      dragAnchor.current  = null;
       isDraggingRef.current = false;
       setIsDragging(false);
-
-      // Notify Canvas to recalculate which column this note belongs to.
       onDragEnd(note.id, currentXRef.current);
     },
     [note.id, onDragEnd]
   );
 
-  // Fix #9: Escape key cancels the active drag — restores note to its
-  // position at drag-start, releases pointer capture, and resets drag state.
+  // ── Escape cancels drag ───────────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !isDraggingRef.current || !dragAnchor.current) return;
-
-      // Restore to start position
-      onUpdate(note.id, {
-        x: dragAnchor.current.noteStartX,
-        y: dragAnchor.current.noteStartY,
-      });
-
-      // Release pointer capture
+      onUpdate(note.id, { x: dragAnchor.current.noteStartX, y: dragAnchor.current.noteStartY });
       rootRef.current?.releasePointerCapture(dragAnchor.current.pointerId);
-
-      // Reset drag state
-      dragAnchor.current = null;
+      dragAnchor.current  = null;
       isDraggingRef.current = false;
       setIsDragging(false);
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [note.id, onUpdate]);
 
   // ── Text handlers ─────────────────────────────────────────────────────────
-
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setLocalText(e.target.value);
-  };
-
-  const handleTextFocus = () => {
-    isEditingRef.current = true;
-  };
-
-  const handleTextBlur = () => {
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => setLocalText(e.target.value);
+  const handleTextFocus  = () => { isEditingRef.current = true; };
+  const handleTextBlur   = () => {
     isEditingRef.current = false;
-    if (localText !== note.text) {
-      onUpdate(note.id, { text: localText });
-    }
+    if (localText !== note.text) onUpdate(note.id, { text: localText });
   };
 
-  // ── Blur / reveal logic ───────────────────────────────────────────────────
-  // A note is "own" if the local user was the last person to update it.
-  // Own notes are always fully visible; other users' notes are blurred until
-  // the facilitator calls Reveal.
-  const isOwnNote = note.lastUpdatedBy === localUserName;
+  // ── Reveal / blur logic ───────────────────────────────────────────────────
+  const isOwnNote  = note.lastUpdatedBy === localUserName;
   const shouldBlur = !isRevealed && !isOwnNote;
 
   // ── Z-index ───────────────────────────────────────────────────────────────
-  // While dragging: force 9999 locally so the note appears on top immediately,
-  // before the `onBringToFront` Yjs write round-trips back through the observer.
-  // When idle: use the persisted stacking order from Yjs (fallback to 1 for
-  // notes created before zIndex was added to the schema).
-  const stackZIndex = isDragging ? 9999 : note.zIndex ?? 1;
+  const stackZ = isDragging ? 9999 : (note.zIndex ?? 1);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Drag-state visual transforms ──────────────────────────────────────────
+  // Kept subtle: a slight lift (bigger shadow) and a 1° rotation. No scale —
+  // scaling fights with the canvas zoom transform and can feel queasy.
+  const dragStyle: React.CSSProperties = isDragging
+    ? {
+        boxShadow: "0 16px 40px 0 rgba(60,45,20,0.20), 0 2px 8px 0 rgba(60,45,20,0.12)",
+        transform: `rotate(1.2deg)`,
+        cursor: "grabbing",
+      }
+    : {
+        boxShadow: "0 2px 8px 0 rgba(60,45,20,0.09), 0 1px 2px 0 rgba(60,45,20,0.06)",
+        transform: "rotate(0deg)",
+        cursor: "default",
+      };
 
   return (
     <div
@@ -357,150 +248,131 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
       onPointerDown={handleRootPointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      // Entrance animation class applied only while `isNew` is true
+      className={isNew ? "note-pop" : undefined}
       style={{
         position: "absolute",
         left: note.x,
-        top: note.y,
-        // Fix #8: use NOTE_WIDTH constant instead of hardcoded 220
+        top:  note.y,
         width: NOTE_WIDTH,
-        zIndex: stackZIndex,
-        // Only hint GPU compositing while actually moving to avoid promoting
-        // every note to its own layer at all times.
-        willChange: isDragging ? "transform" : "auto",
+        zIndex: stackZ,
+        willChange: isDragging ? "transform, box-shadow" : "auto",
+        borderRadius: 10,
+        border: `1.5px solid ${colors.border}`,
+        backgroundColor: colors.bg,
+        overflow: "hidden",
+        // Smooth shadow + rotation transition when picking up / putting down,
+        // but instant while actually dragging (no lag on move).
+        transition: isDragging
+          ? "none"
+          : "box-shadow 180ms ease, transform 180ms ease",
+        ...dragStyle,
       }}
-      className={`
-        sticky-note rounded-lg border-2
-        ${colors.bg} ${colors.border}
-        ${
-          isDragging
-            ? "shadow-2xl scale-[1.03] rotate-1 cursor-grabbing transition-none"
-            : "shadow-md scale-100 rotate-0 cursor-default transition-shadow duration-150"
-        }
-        select-none
-      `}
     >
-      {/* ── Drag handle + controls ────────────────────────────────────────── */}
+      {/* ── Drag handle strip ─────────────────────────────────────────────── */}
+      {/*
+          The entire header bar is the drag target. Removing the GripVertical
+          icon keeps it clean — the cursor change communicates affordance.
+          Color swatches + delete live here so they're always accessible.
+      */}
       <div
-        className={`
-          flex items-center justify-between px-2 py-1 rounded-t-lg
-          ${colors.header}
-          ${isDragging ? "cursor-grabbing" : "cursor-grab"}
-        `}
-        data-drag-handle
-        // No separate onPointerDown here — it's handled on the root so that
-        // pointer capture is always set on the element that owns the ref.
+        style={{
+          background: colors.header,
+          borderBottom: `1px solid ${colors.border}`,
+          cursor: isDragging ? "grabbing" : "grab",
+        }}
+        className="flex items-center justify-between px-2.5 py-1.5"
       >
-        <GripVertical size={14} className="text-gray-400 pointer-events-none" />
-
-        {/* Color picker dots */}
+        {/* Color picker */}
         <div
           className="flex items-center gap-1"
-          // Stop propagation so clicking a color dot doesn't trigger a drag.
           onPointerDown={(e) => e.stopPropagation()}
         >
           {NOTE_COLORS.map((c) => (
             <button
               key={c}
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpdate(note.id, { color: c });
-              }}
+              onClick={(e) => { e.stopPropagation(); onUpdate(note.id, { color: c }); }}
               aria-label={`Set color to ${c}`}
+              style={{ backgroundColor: COLOR_MAP[c].dot }}
               className={`
                 w-3 h-3 rounded-full border-2 transition-transform hover:scale-125
-                ${COLOR_MAP[c].dot}
-                ${
-                  note.color === c
-                    ? "border-gray-700 scale-125"
-                    : "border-transparent"
-                }
+                ${note.color === c ? "border-gray-700 scale-125" : "border-transparent"}
               `}
             />
           ))}
         </div>
 
-        {/* Delete button */}
+        {/* Delete */}
         <button
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(note.id);
-          }}
+          onClick={(e) => { e.stopPropagation(); onDelete(note.id); }}
           aria-label="Delete note"
-          className="text-gray-400 hover:text-red-500 transition-colors rounded p-0.5 hover:bg-red-50"
+          className="text-stone-400 hover:text-red-500 transition-colors rounded p-0.5 hover:bg-red-50"
         >
-          <X size={13} />
+          <X size={12} strokeWidth={2.5} />
         </button>
       </div>
 
       {/* ── Note body ─────────────────────────────────────────────────────── */}
-      <div className="p-2 relative">
-        {/*
-          Blur wrapper: when shouldBlur is true we apply blur-md + select-none
-          so the text is visually obscured. The textarea stays in the DOM so
-          the note's own author can always edit it without re-mounting.
-        */}
-        <div
-          className={
-            shouldBlur ? "blur-md select-none pointer-events-none" : ""
-          }
-        >
+      <div className="p-2.5 relative">
+        {/* Blur wrapper */}
+        <div className={shouldBlur ? "blur-md select-none pointer-events-none" : ""}>
           <textarea
             ref={textareaRef}
             value={localText}
             onChange={handleTextChange}
             onFocus={handleTextFocus}
             onBlur={handleTextBlur}
-            // Prevent textarea clicks from bubbling to the root and starting
-            // a drag-on-handle path check, while still letting the textarea
-            // receive focus naturally.
             onPointerDown={(e) => e.stopPropagation()}
             placeholder="Type something…"
-            rows={4}
+            rows={5}
+            style={{
+              backgroundColor: colors.textarea,
+              // Accent-coloured focus ring instead of generic blue
+              // (CSS focus-visible in index.css handles the global ring;
+              //  this shadow gives a softer in-card treatment)
+            }}
             className={`
-              w-full resize-none text-sm text-gray-800 rounded p-1.5
-              focus:outline-none focus:ring-2 focus:ring-offset-1
-              placeholder-gray-400 leading-snug
-              ${colors.textarea}
-              ${colors.border.replace("border-", "focus:ring-")}
+              w-full resize-none text-[13px] leading-snug text-stone-800
+              rounded-md px-2 py-1.5
+              placeholder-stone-300
+              focus:outline-none focus:ring-1
+              transition-shadow duration-150
             `}
           />
         </div>
 
-        {/* "Hidden" badge — only shown when blurred */}
         {shouldBlur && (
-          <div className="absolute inset-x-2 top-9 flex items-center justify-center pointer-events-none">
-            <span className="text-[11px] text-slate-500 font-medium bg-white/80 px-2 py-0.5 rounded-full shadow-sm">
+          <div className="absolute inset-x-2.5 top-10 flex items-center justify-center pointer-events-none">
+            <span className="text-[11px] text-stone-500 font-medium bg-white/80 px-2.5 py-0.5 rounded-full shadow-sm">
               🔒 Hidden until reveal
             </span>
           </div>
         )}
 
-        {/* Footer: author name + upvote */}
-        <div className="flex items-center justify-between mt-1">
-          <p className="text-[10px] text-gray-400 truncate max-w-[120px]">
+        {/* Footer: author + upvote */}
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-[10px] text-stone-400 truncate max-w-[120px] leading-none">
             {note.lastUpdatedBy}
           </p>
 
           <button
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpvote(note.id);
-            }}
+            onClick={(e) => { e.stopPropagation(); onUpvote(note.id); }}
             aria-label={`Upvote — ${note.votes ?? 0} votes`}
-            className={`
-              flex items-center gap-1 px-1.5 py-0.5 rounded-full
-              text-[11px] font-semibold
-              transition-all duration-150 active:scale-90
-              ${
-                (note.votes ?? 0) > 0
-                  ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
-                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }
-            `}
+            style={
+              (note.votes ?? 0) > 0
+                ? { background: "#EEF2FF", color: "#4F46E5", border: "1px solid #C7D2FE" }
+                : { background: "#F5F5F4", color: "#78716c", border: "1px solid #E7E5E4" }
+            }
+            className="
+              inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full
+              text-[11px] font-semibold tabular
+              transition-all duration-100 active:scale-90
+              hover:brightness-95
+            "
           >
-            <ThumbsUp size={11} />
+            <ThumbsUp size={10} strokeWidth={2.5} />
             <span>{note.votes ?? 0}</span>
           </button>
         </div>
